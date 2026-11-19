@@ -1326,14 +1326,16 @@
     }
 
     /* ==========================================================================
-       Native Desktop WebView2 Frameless Window Overrides
+       Native Desktop WebView2 Frameless Transparent Glass Window Overrides
        ========================================================================== */
+    html.desktop-mode,
     body.desktop-mode {
-      background-color: #060911;
+      background: transparent !important;
+      background-color: transparent !important;
     }
 
     body.desktop-mode .ambient-backdrop {
-      border-radius: 16px;
+      display: none !important;
     }
 
     body.desktop-mode .window-stage {
@@ -1649,7 +1651,10 @@
     const IS_DESKTOP = Boolean(window.chrome && window.chrome.webview);
 
     if (IS_DESKTOP) {
+      document.documentElement.classList.add('desktop-mode');
       document.body.classList.add('desktop-mode');
+      const bg = document.querySelector('.ambient-backdrop');
+      if (bg) bg.remove();
     }
 
     let currentTab = 'downloader';
@@ -1934,6 +1939,7 @@
       slider.value = clamped;
       updateSliderFill(slider);
       document.getElementById('setBlurVal').textContent = `${clamped}px`;
+      if (IS_DESKTOP) sendNative('set_blur', { blur: clamped });
       if (!skipSave) scheduleSaveConfig();
     }
 

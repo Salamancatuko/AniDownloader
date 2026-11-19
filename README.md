@@ -18,10 +18,10 @@
 
 ## ✨ 核心特色
 
-1. **無邊框 Liquid Glass 現代介面 (840×510)**
-   - 採用微軟官方 WebView2 核心，呈現高質感毛玻璃與動態光澤。
+1. **真透明無邊框 Liquid Glass 現代介面 (840×510)**
+   - 採用微軟官方 WebView2 核心結合 Windows 原生 DWM Acrylic 毛玻璃特效，直接透視真實桌面背景（無多餘預覽底圖）。
    - 支援滑鼠任意拖曳移動、原生最小化及關閉。
-   - 頂部支援 **透光度 (15%～85%)** 即時調節。
+   - 頂部支援 **透光度 (15%～85%)** 與 **模糊強度 (0～40px)** 即時調節。
    - 具備 **Downloader**、**Settings**、**Console** 三大面板。
    - 多語系支援：繁體中文、简体中文、English，設定自動持久化儲存。
 
@@ -40,7 +40,7 @@
 
 4. **全自包含免安裝封裝**
    - 執行檔內已完整嵌入 `ffmpeg.exe` 與 `yt-dlp.exe`。
-   - 下載單一 `動畫瘋m3u8下載器.exe` 雙擊即可直接運行，無需預先配置 Python 或系統 PATH。
+   - 下載單一 `AniDownloader_v1.0.0.exe` 雙擊即可直接運行，無需預先配置 Python 或系統 PATH。
 
 ---
 
@@ -48,8 +48,8 @@
 
 請前往 [**Releases 發布頁**](../../releases/latest) 下載最新打包成品：
 
-* **`動畫瘋m3u8下載器.exe`**：單檔綠色版，雙擊直接運行。
-* **`AniDownloader_v2.0_Windows_x64.zip`**：完整便攜包（內含獨立的 `ffmpeg.exe`、`yt-dlp.exe` 與使用說明）。
+* **`AniDownloader_v1.0.0.exe`**：單檔綠色版，雙擊直接運行。
+* **`AniDownloader_v1.0.0_Windows_x64.zip`**：完整便攜包（內含獨立的 `ffmpeg.exe`、`yt-dlp.exe` 與使用說明 `README.txt`）。
 
 ### 使用步驟
 1. 打開瀏覽器進入動畫瘋影片播放頁面。
@@ -76,7 +76,7 @@ cd AniDownloader
 rsrc -manifest manifest.xml -ico app.ico -o rsrc.syso
 
 # 3. 編譯 Windows 64位元無終端視窗 EXE
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H windowsgui -s -w" -o "動畫瘋m3u8下載器.exe" .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H windowsgui -s -w" -o "AniDownloader.exe" .
 ```
 
 ---

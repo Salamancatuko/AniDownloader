@@ -25,36 +25,38 @@ var (
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 
-	procGetModuleHandleW          = kernel32.NewProc("GetModuleHandleW")
-	procRegisterClassExW          = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW           = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW            = user32.NewProc("DefWindowProcW")
-	procDestroyWindow             = user32.NewProc("DestroyWindow")
-	procShowWindow                = user32.NewProc("ShowWindow")
-	procUpdateWindow              = user32.NewProc("UpdateWindow")
-	procSetFocus                  = user32.NewProc("SetFocus")
-	procGetMessageW               = user32.NewProc("GetMessageW")
-	procTranslateMessage          = user32.NewProc("TranslateMessage")
-	procDispatchMessageW          = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage           = user32.NewProc("PostQuitMessage")
-	procSendMessageW              = user32.NewProc("SendMessageW")
-	procPostMessageW              = user32.NewProc("PostMessageW")
-	procReleaseCapture            = user32.NewProc("ReleaseCapture")
-	procSetWindowPos              = user32.NewProc("SetWindowPos")
-	procSetWindowRgn              = user32.NewProc("SetWindowRgn")
-	procGetSystemMetrics          = user32.NewProc("GetSystemMetrics")
-	procLoadImageW                = user32.NewProc("LoadImageW")
-	procLoadCursorW               = user32.NewProc("LoadCursorW")
-	procSetProcessDPIAware        = user32.NewProc("SetProcessDPIAware")
-	procSetProcessDpiAwarenessCtx = user32.NewProc("SetProcessDpiAwarenessContext")
-	procGetDpiForWindow           = user32.NewProc("GetDpiForWindow")
-	procGetDpiForSystem           = user32.NewProc("GetDpiForSystem")
-	procMessageBoxW               = user32.NewProc("MessageBoxW")
+	procGetModuleHandleW            = kernel32.NewProc("GetModuleHandleW")
+	procRegisterClassExW            = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW             = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW              = user32.NewProc("DefWindowProcW")
+	procDestroyWindow               = user32.NewProc("DestroyWindow")
+	procShowWindow                  = user32.NewProc("ShowWindow")
+	procUpdateWindow                = user32.NewProc("UpdateWindow")
+	procSetFocus                    = user32.NewProc("SetFocus")
+	procGetMessageW                 = user32.NewProc("GetMessageW")
+	procTranslateMessage            = user32.NewProc("TranslateMessage")
+	procDispatchMessageW            = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage             = user32.NewProc("PostQuitMessage")
+	procSendMessageW                = user32.NewProc("SendMessageW")
+	procPostMessageW                = user32.NewProc("PostMessageW")
+	procReleaseCapture              = user32.NewProc("ReleaseCapture")
+	procSetWindowPos                = user32.NewProc("SetWindowPos")
+	procSetWindowRgn                = user32.NewProc("SetWindowRgn")
+	procGetSystemMetrics            = user32.NewProc("GetSystemMetrics")
+	procLoadImageW                  = user32.NewProc("LoadImageW")
+	procLoadCursorW                 = user32.NewProc("LoadCursorW")
+	procSetProcessDPIAware          = user32.NewProc("SetProcessDPIAware")
+	procSetProcessDpiAwarenessCtx   = user32.NewProc("SetProcessDpiAwarenessContext")
+	procGetDpiForWindow             = user32.NewProc("GetDpiForWindow")
+	procGetDpiForSystem             = user32.NewProc("GetDpiForSystem")
+	procMessageBoxW                 = user32.NewProc("MessageBoxW")
+	procSetWindowCompositionAttrib  = user32.NewProc("SetWindowCompositionAttribute")
 
-	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
+	procGetStockObject     = gdi32.NewProc("GetStockObject")
 	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 
-	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+	procDwmSetWindowAttribute        = dwmapi.NewProc("DwmSetWindowAttribute")
+	procDwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 
 	procShellExecuteW        = shell32.NewProc("ShellExecuteW")
 	procSHBrowseForFolderW   = shell32.NewProc("SHBrowseForFolderW")
@@ -93,6 +95,7 @@ const (
 	WM_APP_MINIMIZE = WM_USER + 11
 	WM_APP_BROWSE   = WM_USER + 12
 	WM_APP_EVAL     = WM_USER + 13
+	WM_APP_BLUR     = WM_USER + 14
 
 	HTCAPTION   = 2
 	WA_INACTIVE = 0
@@ -103,14 +106,24 @@ const (
 	SM_CXSCREEN = 0
 	SM_CYSCREEN = 1
 
+	BLACK_BRUSH = 4
+
 	IMAGE_ICON     = 1
 	LR_DEFAULTSIZE = 0x0040
 	LR_SHARED      = 0x8000
 	IDC_ARROW      = 32512
 
+	DWMWA_USE_IMMERSIVE_DARK_MODE  = 20
 	DWMWA_WINDOW_CORNER_PREFERENCE = 33
 	DWMWCP_ROUND                   = 2
-	DWMWA_USE_IMMERSIVE_DARK_MODE  = 20
+	DWMWA_SYSTEMBACKDROP_TYPE      = 38
+	DWMSBT_NONE                    = 1
+	DWMSBT_TRANSIENTWINDOW         = 3 // Native Windows 11 Acrylic
+
+	WCA_ACCENT_POLICY               = 19
+	ACCENT_DISABLED                 = 0
+	ACCENT_ENABLE_BLURBEHIND        = 3
+	ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
 )
 
 type WNDCLASSEXW struct {
@@ -138,6 +151,27 @@ type RECT struct {
 	Top    int32
 	Right  int32
 	Bottom int32
+}
+
+type MARGINS struct {
+	CxLeftWidth    int32
+	CxRightWidth   int32
+	CyTopHeight    int32
+	CyBottomHeight int32
+}
+
+type ACCENT_POLICY struct {
+	AccentState   uint32
+	AccentFlags   uint32
+	GradientColor uint32
+	AnimationId   uint32
+}
+
+type WINDOWCOMPOSITIONATTRIBDATA struct {
+	Attrib uint32
+	_      uint32
+	PvData uintptr
+	CbData uintptr
 }
 
 type MSG struct {
@@ -180,6 +214,7 @@ var gDesktop *DesktopApp
 type webMsg struct {
 	Action         string     `json:"action"`
 	Config         *AppConfig `json:"config,omitempty"`
+	Blur           int        `json:"blur,omitempty"`
 	URL            string     `json:"url,omitempty"`
 	Title          string     `json:"title,omitempty"`
 	SaveDir        string     `json:"saveDir,omitempty"`
@@ -231,6 +266,47 @@ func loadAppIcon(hInstance uintptr) uintptr {
 	}
 	h, _, _ := procLoadImageW.Call(0, 32512, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE|LR_SHARED)
 	return h
+}
+
+func (a *DesktopApp) applyGlassBackdrop(enableBlur bool) {
+	if a.hwnd == 0 {
+		return
+	}
+	// Extend DWM glass frame over the entire client area so WebView2 Alpha=0 is truly transparent
+	if procDwmExtendFrameIntoClientArea.Find() == nil {
+		margins := MARGINS{-1, -1, -1, -1}
+		procDwmExtendFrameIntoClientArea.Call(a.hwnd, uintptr(unsafe.Pointer(&margins)))
+	}
+
+	// Prefer native Windows 11 22H2+ Acrylic Backdrop (smooth drag, zero lag)
+	if procDwmSetWindowAttribute.Find() == nil {
+		backdrop := uint32(DWMSBT_NONE)
+		if enableBlur {
+			backdrop = uint32(DWMSBT_TRANSIENTWINDOW)
+		}
+		hr, _, _ := procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, uintptr(unsafe.Pointer(&backdrop)), 4)
+		if hr == 0 {
+			return
+		}
+	}
+
+	// Fallback for Windows 10 / Windows 11 21H2 via SetWindowCompositionAttribute
+	if procSetWindowCompositionAttrib.Find() == nil {
+		var policy ACCENT_POLICY
+		if enableBlur {
+			policy.AccentState = ACCENT_ENABLE_BLURBEHIND
+			policy.AccentFlags = 2
+			policy.GradientColor = 0x01140E0C // Subtle tint; primary opacity controlled by CSS --glass-alpha
+		} else {
+			policy.AccentState = ACCENT_DISABLED
+		}
+		data := WINDOWCOMPOSITIONATTRIBDATA{
+			Attrib: WCA_ACCENT_POLICY,
+			PvData: uintptr(unsafe.Pointer(&policy)),
+			CbData: unsafe.Sizeof(policy),
+		}
+		procSetWindowCompositionAttrib.Call(a.hwnd, uintptr(unsafe.Pointer(&data)))
+	}
 }
 
 func (a *DesktopApp) applyRoundedCorners(w, h, dpi int32) {
@@ -298,6 +374,10 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 		case WM_APP_MINIMIZE:
 			procShowWindow.Call(hwnd, SW_MINIMIZE)
+			return 0
+
+		case WM_APP_BLUR:
+			app.applyGlassBackdrop(wparam > 0)
 			return 0
 
 		case WM_APP_BROWSE:
@@ -430,6 +510,8 @@ func (a *DesktopApp) handleWebMessage(raw string) {
 		procPostMessageW.Call(a.hwnd, WM_APP_MINIMIZE, 0, 0)
 	case "close":
 		procPostMessageW.Call(a.hwnd, WM_CLOSE, 0, 0)
+	case "set_blur":
+		procPostMessageW.Call(a.hwnd, WM_APP_BLUR, uintptr(m.Blur), 0)
 	case "init":
 		a.pageReady = true
 		a.PushInitState()
@@ -484,8 +566,8 @@ func RunDesktopWindow(srv *AppServer) error {
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	hIcon := loadAppIcon(hInstance)
 	hCursor, _, _ := procLoadCursorW.Call(0, IDC_ARROW)
-	// #060911 -> BGR = 0x00110906
-	hBrush, _, _ := procCreateSolidBrush.Call(0x00110906)
+	// BLACK_BRUSH (0x00000000) renders as Alpha=0 transparent when DWM glass frame is extended
+	hBrush, _, _ := procGetStockObject.Call(BLACK_BRUSH)
 
 	className := utf16Ptr("AniGamerLiquidGlassWindow")
 	var wc WNDCLASSEXW
@@ -540,10 +622,11 @@ func RunDesktopWindow(srv *AppServer) error {
 		posY = (int32(screenH) - physH) / 2
 		procSetWindowPos.Call(hwnd, 0, uintptr(posX), uintptr(posY), uintptr(physW), uintptr(physH), SWP_NOZORDER|SWP_NOACTIVATE)
 	}
-	app.applyRoundedCorners(physW, physH, dpi)
 
-	// IMPORTANT: Show and update the native window BEFORE embedding WebView2
-	// so the WebView2 controller initializes with valid visible client bounds.
+	app.applyRoundedCorners(physW, physH, dpi)
+	app.applyGlassBackdrop(srv.config.Blur > 0)
+
+	// Show and update the native window BEFORE embedding WebView2
 	procShowWindow.Call(hwnd, SW_SHOW)
 	procUpdateWindow.Call(hwnd)
 	procSetFocus.Call(hwnd)
@@ -575,9 +658,10 @@ func RunDesktopWindow(srv *AppServer) error {
 		return nil
 	}
 
+	// Fully transparent WebView2 background (Alpha = 0) so the real Windows desktop shows through
 	if ctrl := chromium.GetController(); ctrl != nil {
 		if ctrl2 := ctrl.GetICoreWebView2Controller2(); ctrl2 != nil {
-			_ = ctrl2.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 6, G: 9, B: 17})
+			_ = ctrl2.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 0, R: 0, G: 0, B: 0})
 		}
 	}
 
@@ -592,7 +676,6 @@ func RunDesktopWindow(srv *AppServer) error {
 
 	chromium.Resize()
 	_ = chromium.Show()
-	// Load HTML directly from memory (immune to system proxy / VPN / firewall loopback issues)
 	chromium.NavigateToString(string(embeddedIndexHTML))
 	chromium.Focus()
 
