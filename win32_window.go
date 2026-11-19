@@ -121,10 +121,11 @@ const (
 	DWMSBT_NONE                    = 1
 	DWMSBT_TRANSIENTWINDOW         = 3 // Native Windows 11 Acrylic
 
-	WCA_ACCENT_POLICY               = 19
-	ACCENT_DISABLED                 = 0
-	ACCENT_ENABLE_BLURBEHIND        = 3
-	ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
+	WCA_ACCENT_POLICY                 = 19
+	ACCENT_DISABLED                   = 0
+	ACCENT_ENABLE_TRANSPARENTGRADIENT = 2
+	ACCENT_ENABLE_BLURBEHIND          = 3
+	ACCENT_ENABLE_ACRYLICBLURBEHIND   = 4
 )
 
 type WNDCLASSEXW struct {
@@ -203,7 +204,7 @@ type DesktopApp struct {
 	chromium         *edge.Chromium
 	server           *AppServer
 	win11RoundActive bool
-	blurEnabled      bool
+	blurLevel        int
 	pageReady        bool
 	browseResCh      chan string
 
@@ -270,11 +271,17 @@ func loadAppIcon(hInstance uintptr) uintptr {
 	return h
 }
 
-func (a *DesktopApp) applyGlassBackdrop(enableBlur bool) {
+func (a *DesktopApp) applyGlassBackdrop(blurLevel int) {
 	if a.hwnd == 0 {
 		return
 	}
-	a.blurEnabled = enableBlur
+	if blurLevel < 0 {
+		blurLevel = 0
+	}
+	if blurLevel > 40 {
+		blurLevel = 40
+	}
+	a.blurLevel = blurLevel
 
 	// Ensure Windows 11 system backdrop is NONE so it does not paint an opaque grey fallback on WS_POPUP / unfocused windows
 	if procDwmSetWindowAttribute.Find() == nil {
@@ -291,15 +298,21 @@ func (a *DesktopApp) applyGlassBackdrop(enableBlur bool) {
 	// Use SetWindowCompositionAttribute (works on both Windows 10 & Windows 11, including WS_POPUP & unfocused state)
 	if procSetWindowCompositionAttrib.Find() == nil {
 		var policy ACCENT_POLICY
-		if enableBlur {
-			policy.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND
-			policy.AccentFlags = 2
-			// AABBGGRR: Alpha=0x01 (minimal non-zero alpha required by Acrylic) so desktop wallpaper shows clearly;
-			// primary glass tint & opacity are controlled by CSS --glass-alpha.
+		policy.AccentFlags = 2
+		switch {
+		case blurLevel == 0:
+			// Pure crystal-clear transparent glass (0 blur, NO black background)
+			policy.AccentState = ACCENT_ENABLE_TRANSPARENTGRADIENT
+			policy.GradientColor = 0x01000000
+		case blurLevel <= 15:
+			// Light native frosted blur (visibly lighter/clearer than Acrylic)
+			policy.AccentState = ACCENT_ENABLE_BLURBEHIND
 			policy.GradientColor = 0x01100C08
-		} else {
-			// Pure crystal-clear transparent glass (no blur, real desktop visible sharply behind)
-			policy.AccentState = ACCENT_DISABLED
+		default:
+			// Deep Acrylic frosted glass (16..40), with frost density scaling smoothly from 0x01 to 0x78
+			policy.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND
+			alpha := uint32(1 + ((blurLevel - 16) * 119 / 24))
+			policy.GradientColor = (alpha << 24) | 0x00221610
 		}
 		data := WINDOWCOMPOSITIONATTRIBDATA{
 			Attrib: WCA_ACCENT_POLICY,
@@ -378,7 +391,7 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 			return 0
 
 		case WM_APP_BLUR:
-			app.applyGlassBackdrop(wparam > 0)
+			app.applyGlassBackdrop(int(wparam))
 			return 0
 
 		case WM_APP_BROWSE:
@@ -439,7 +452,7 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 			return 0
 
 		case WM_DWMCOMPOSITIONCHANGED:
-			app.applyGlassBackdrop(app.blurEnabled)
+			app.applyGlassBackdrop(app.blurLevel)
 			return 0
 
 		case WM_ACTIVATE:
@@ -629,7 +642,7 @@ func RunDesktopWindow(srv *AppServer) error {
 	}
 
 	app.applyRoundedCorners(physW, physH, dpi)
-	app.applyGlassBackdrop(srv.config.Blur > 0)
+	app.applyGlassBackdrop(srv.config.Blur)
 
 	// Show and update the native window BEFORE embedding WebView2
 	procShowWindow.Call(hwnd, SW_SHOW)
@@ -637,7 +650,10 @@ func RunDesktopWindow(srv *AppServer) error {
 	procSetFocus.Call(hwnd)
 
 	// Re-apply DWM Acrylic backdrop after window is shown so Windows 11 DWM binds it to the active composition surface
-	app.applyGlassBackdrop(srv.config.Blur > 0)
+	app.applyGlassBackdrop(srv.config.Blur)
+
+	// Ensure WebView2 initializes with Alpha=0 transparent background from the very first frame
+	_ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000")
 
 	dataDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "AniDownloader", "WebView2")
 	if os.Getenv("LOCALAPPDATA") == "" {
@@ -655,7 +671,7 @@ func RunDesktopWindow(srv *AppServer) error {
 				_ = ctrl2.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 0, R: 0, G: 0, B: 0})
 			}
 		}
-		app.applyGlassBackdrop(app.blurEnabled)
+		app.applyGlassBackdrop(app.blurLevel)
 		chromium.Resize()
 		_ = chromium.Show()
 		app.pageReady = true
