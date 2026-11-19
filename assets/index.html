@@ -1,0 +1,2420 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>動畫瘋 m3u8 影片下載器</title>
+  <style>
+    /* ==========================================================================
+       Design Tokens & Global Variables
+       ========================================================================== */
+    :root {
+      --glass-alpha: 0.48;
+      --glass-blur: 22px;
+      --accent: #0095ff;
+      --accent-cyan: #38bdf8;
+      --yt-color: #00B4DF;
+      --ff-color: #F4962E;
+      --switch-yellow: #FFFF00;
+      --green-dot: #10b981;
+      --text-bright: #f8fafc;
+      --text-secondary: #cbd5e1;
+      --text-muted: #94a3b8;
+      --nav-inactive: #8696ab;
+      --stage-scale: 1;
+      --drag-x: 0px;
+      --drag-y: 0px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: "Microsoft JhengHei", "微軟正黑體", sans-serif;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    html,
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #060911;
+      color: var(--text-bright);
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    /* ==========================================================================
+       Static Deep Ambient Neon-Rain Backdrop
+       ========================================================================== */
+    .ambient-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 18% 22%, rgba(0, 149, 255, 0.46) 0%, transparent 42%),
+        radial-gradient(circle at 82% 76%, rgba(124, 58, 237, 0.42) 0%, transparent 48%),
+        radial-gradient(circle at 52% 45%, rgba(14, 165, 233, 0.24) 0%, transparent 55%),
+        radial-gradient(circle at 78% 18%, rgba(56, 189, 248, 0.2) 0%, transparent 38%),
+        linear-gradient(135deg, #060911 0%, #0d1629 48%, #14102b 100%);
+    }
+
+    /* ==========================================================================
+       Responsive Scaling Stage (Decoupled from Window Drag Transform)
+       ========================================================================== */
+    .window-stage {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: scale(var(--stage-scale));
+      transform-origin: center center;
+      transition: opacity 0.22s ease;
+    }
+
+    .window-stage.is-hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ==========================================================================
+       Main 840x510 Borderless Liquid Glass Window (Two-Column Flex)
+       ========================================================================== */
+    .loader-window {
+      position: relative;
+      width: 840px;
+      height: 510px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+      border-radius: 16px;
+      transform: translate(var(--drag-x), var(--drag-y));
+      background-color: rgba(14, 20, 32, var(--glass-alpha));
+      background-image: linear-gradient(
+        155deg,
+        rgba(255, 255, 255, 0.09) 0%,
+        rgba(255, 255, 255, 0.02) 38%,
+        rgba(6, 10, 18, 0.22) 100%
+      );
+      backdrop-filter: blur(var(--glass-blur)) saturate(165%);
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(165%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow:
+        0 32px 80px rgba(0, 0, 0, 0.68),
+        0 8px 24px rgba(0, 0, 0, 0.35),
+        inset 0 1px 1px rgba(255, 255, 255, 0.28),
+        inset 0 -1px 1px rgba(255, 255, 255, 0.06);
+      transition: transform 0.06s linear;
+    }
+
+    .loader-window.is-dragging {
+      transition: none;
+      cursor: grabbing;
+    }
+
+    /* 1px Outer Optical Refraction Border */
+    .loader-window::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.4) 0%,
+        rgba(255, 255, 255, 0.06) 35%,
+        rgba(56, 189, 248, 0.18) 72%,
+        rgba(255, 255, 255, 0.26) 100%
+      );
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    /* ==========================================================================
+       Left Sidebar (Fixed 216px Width)
+       ========================================================================== */
+    .sidebar {
+      width: 216px;
+      flex-shrink: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 34px 20px 24px 24px;
+      position: relative;
+      z-index: 2;
+    }
+
+    /* Subtle Vertical Optical Gradient Divider */
+    .sidebar::after {
+      content: "";
+      position: absolute;
+      top: 28px;
+      bottom: 28px;
+      right: 0;
+      width: 1px;
+      background: linear-gradient(
+        180deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.14) 22%,
+        rgba(255, 255, 255, 0.14) 78%,
+        transparent 100%
+      );
+      pointer-events: none;
+    }
+
+    .brand-wrap {
+      margin-left: 6px;
+      margin-bottom: 34px;
+      flex-shrink: 0;
+    }
+
+    .brand-logo {
+      width: 146px;
+      height: auto;
+      display: block;
+      filter: drop-shadow(0 2px 10px rgba(0, 149, 255, 0.24));
+    }
+
+    .brand-fallback {
+      display: none;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .brand-fallback-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #0095ff, #38bdf8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 16px;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(0, 149, 255, 0.35);
+    }
+
+    .brand-fallback-text {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-bright);
+      letter-spacing: 0.02em;
+    }
+
+    /* Navigation Pills */
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .nav-item {
+      height: 38px;
+      padding: 0 14px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--nav-inactive);
+      border: 1px solid transparent;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+      letter-spacing: 0.01em;
+    }
+
+    .nav-item:hover {
+      color: #e2e8f0;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-item.active {
+      color: var(--text-bright);
+      font-weight: 600;
+      background: linear-gradient(
+        145deg,
+        rgba(255, 255, 255, 0.16) 0%,
+        rgba(0, 149, 255, 0.16) 58%,
+        rgba(10, 18, 32, 0.36) 100%
+      );
+      border-color: rgba(56, 189, 248, 0.32);
+      box-shadow:
+        0 4px 14px rgba(0, 0, 0, 0.24),
+        0 0 14px rgba(56, 189, 248, 0.12),
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.42);
+    }
+
+    /* Bottom Bundled Module Versions */
+    .version-list {
+      margin-top: auto;
+      padding-left: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .version-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: 0.01em;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background-color: var(--green-dot);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+      flex-shrink: 0;
+    }
+
+    /* ==========================================================================
+       Right Main Area (Flex 1, Content Width = Exactly 568px)
+       ========================================================================== */
+    .main-area {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 28px 18px 28px;
+      position: relative;
+      z-index: 2;
+    }
+
+    /* Top Header Bar */
+    .main-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 32px;
+      margin-bottom: 18px;
+      flex-shrink: 0;
+    }
+
+    .page-title-text {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text-bright);
+      letter-spacing: -0.01em;
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    }
+
+    .win-controls-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .top-opacity-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .top-opacity-val {
+      font-size: 12px;
+      color: var(--text-secondary);
+      min-width: 32px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .win-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.12) 0%,
+        rgba(255, 255, 255, 0.04) 100%
+      );
+      color: var(--text-muted);
+      font-size: 12.5px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .win-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: var(--text-bright);
+    }
+
+    .win-btn.close:hover {
+      background: rgba(239, 68, 68, 0.36);
+      border-color: rgba(248, 113, 113, 0.52);
+      color: #fecaca;
+    }
+
+    /* Tab Content Area */
+    .tab-content {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .tab-panel {
+      display: none;
+      height: 100%;
+      min-height: 0;
+      flex-direction: column;
+    }
+
+    .tab-panel.active {
+      display: flex;
+    }
+
+    #tab-downloader {
+      gap: 15px;
+    }
+
+    #tab-settings {
+      gap: 16px;
+    }
+
+    #tab-console {
+      gap: 0;
+    }
+
+    /* Bottom Footer Bar */
+    .main-footer {
+      height: 18px;
+      margin-top: 12px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .clock-text {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+    }
+
+    /* ==========================================================================
+       Unified Liquid Glass Materials (.liquid-surface & .liquid-well)
+       ========================================================================== */
+    .liquid-surface {
+      --mx: 50%;
+      --my: 0%;
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      background:
+        radial-gradient(
+          200px circle at var(--mx) var(--my),
+          rgba(255, 255, 255, 0.15) 0%,
+          rgba(0, 149, 255, 0.08) 45%,
+          transparent 76%
+        ),
+        linear-gradient(
+          160deg,
+          rgba(255, 255, 255, 0.12) 0%,
+          rgba(255, 255, 255, 0.03) 48%,
+          rgba(8, 13, 24, 0.44) 100%
+        );
+      backdrop-filter: blur(18px) saturate(175%);
+      -webkit-backdrop-filter: blur(18px) saturate(175%);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow:
+        0 8px 24px rgba(0, 0, 0, 0.26),
+        inset 0 1px 1px rgba(255, 255, 255, 0.3),
+        inset 0 -1px 1px rgba(0, 0, 0, 0.28);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.16s ease;
+    }
+
+    .liquid-surface::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.42) 0%,
+        rgba(255, 255, 255, 0.06) 38%,
+        rgba(56, 189, 248, 0.16) 74%,
+        rgba(255, 255, 255, 0.26) 100%
+      );
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .liquid-surface::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 8%;
+      right: 8%;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.46) 50%,
+        transparent 100%
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Recessed Liquid Glass Input Wells */
+    .liquid-well {
+      --mx: 50%;
+      --my: 0%;
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      flex-wrap: nowrap;
+      height: 38px;
+      padding: 0 12px;
+      border-radius: 10px;
+      background:
+        radial-gradient(
+          160px circle at var(--mx) var(--my),
+          rgba(255, 255, 255, 0.15) 0%,
+          rgba(0, 149, 255, 0.08) 42%,
+          transparent 75%
+        ),
+        linear-gradient(
+          170deg,
+          rgba(7, 12, 22, 0.56) 0%,
+          rgba(15, 23, 38, 0.38) 56%,
+          rgba(255, 255, 255, 0.07) 100%
+        );
+      backdrop-filter: blur(18px) saturate(185%);
+      -webkit-backdrop-filter: blur(18px) saturate(185%);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow:
+        inset 0 2px 5px rgba(0, 0, 0, 0.38),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.16),
+        0 4px 14px rgba(0, 0, 0, 0.2);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .liquid-well::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.36) 0%,
+        rgba(255, 255, 255, 0.05) 38%,
+        rgba(56, 189, 248, 0.16) 75%,
+        rgba(255, 255, 255, 0.22) 100%
+      );
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .liquid-well::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 8%;
+      right: 8%;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.35) 50%,
+        transparent 100%
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .liquid-well:hover {
+      border-color: rgba(255, 255, 255, 0.26);
+    }
+
+    .liquid-well:focus-within {
+      border-color: rgba(56, 189, 248, 0.68);
+      box-shadow:
+        inset 0 2px 5px rgba(0, 0, 0, 0.35),
+        0 0 0 1px rgba(56, 189, 248, 0.22),
+        0 6px 18px rgba(0, 149, 255, 0.18);
+    }
+
+    .liquid-well input {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      min-width: 0;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12.5px;
+      user-select: text;
+    }
+
+    .liquid-well input::placeholder {
+      color: rgba(148, 163, 184, 0.56);
+    }
+
+    .liquid-well input:focus {
+      color: var(--text-bright);
+    }
+
+    /* ==========================================================================
+       Liquid Glass Capsule Sliders (No Solid Round Dots)
+       ========================================================================== */
+    .liquid-slider {
+      --fill-pct: 50%;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 999px;
+      background: linear-gradient(
+        90deg,
+        rgba(0, 149, 255, 0.88) 0%,
+        rgba(56, 189, 248, 0.98) var(--fill-pct),
+        rgba(7, 12, 22, 0.6) var(--fill-pct),
+        rgba(7, 12, 22, 0.6) 100%
+      );
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow:
+        inset 0 1px 2px rgba(0, 0, 0, 0.48),
+        0 1px 0 rgba(255, 255, 255, 0.08);
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.18s ease;
+    }
+
+    .liquid-slider:hover {
+      border-color: rgba(56, 189, 248, 0.42);
+    }
+
+    .liquid-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 22px;
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.94) 0%,
+        rgba(224, 242, 254, 0.62) 48%,
+        rgba(125, 211, 252, 0.42) 100%
+      );
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow:
+        0 2px 6px rgba(0, 0, 0, 0.48),
+        0 0 10px rgba(56, 189, 248, 0.45),
+        inset 0 1px 1px rgba(255, 255, 255, 1),
+        inset 0 -1px 1.5px rgba(0, 149, 255, 0.3);
+      cursor: grab;
+      transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.16s ease;
+    }
+
+    .liquid-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.08);
+      box-shadow:
+        0 3px 9px rgba(0, 0, 0, 0.52),
+        0 0 14px rgba(56, 189, 248, 0.78),
+        inset 0 1px 1px rgba(255, 255, 255, 1);
+    }
+
+    .liquid-slider:active::-webkit-slider-thumb {
+      cursor: grabbing;
+      transform: scale(1.13);
+      box-shadow:
+        0 3px 10px rgba(0, 0, 0, 0.55),
+        0 0 18px rgba(56, 189, 248, 0.92),
+        inset 0 1px 1px rgba(255, 255, 255, 1);
+    }
+
+    .liquid-slider::-moz-range-thumb {
+      width: 22px;
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.94) 0%,
+        rgba(224, 242, 254, 0.62) 48%,
+        rgba(125, 211, 252, 0.42) 100%
+      );
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow:
+        0 2px 6px rgba(0, 0, 0, 0.48),
+        0 0 10px rgba(56, 189, 248, 0.45),
+        inset 0 1px 1px rgba(255, 255, 255, 1);
+      cursor: grab;
+      transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.16s ease;
+    }
+
+    /* ==========================================================================
+       Downloader Tab Components
+       ========================================================================== */
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .field-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 20px;
+      margin-bottom: 6px;
+    }
+
+    .field-label-bright {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+      letter-spacing: 0.01em;
+    }
+
+    .inline-btn-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mini-inline-btn {
+      padding: 2px 9px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.14) 0%,
+        rgba(255, 255, 255, 0.05) 100%
+      );
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .mini-inline-btn:hover {
+      background: linear-gradient(
+        180deg,
+        rgba(0, 149, 255, 0.34) 0%,
+        rgba(0, 149, 255, 0.16) 100%
+      );
+      border-color: rgba(56, 189, 248, 0.55);
+      color: var(--text-bright);
+    }
+
+    .field-grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .ext-suffix {
+      position: relative;
+      z-index: 2;
+      flex-shrink: 0;
+      margin-left: 6px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .browse-btn {
+      position: relative;
+      z-index: 2;
+      flex-shrink: 0;
+      margin-left: 8px;
+      padding: 3px 10px;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: #e2e8f0;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.18) 0%,
+        rgba(255, 255, 255, 0.06) 100%
+      );
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 6px;
+      box-shadow:
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.36),
+        0 2px 6px rgba(0, 0, 0, 0.24);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+    }
+
+    .browse-btn:hover {
+      background: linear-gradient(
+        180deg,
+        rgba(0, 149, 255, 0.36) 0%,
+        rgba(0, 149, 255, 0.18) 100%
+      );
+      border-color: rgba(56, 189, 248, 0.58);
+      color: var(--text-bright);
+    }
+
+    /* Anti-Leech Toggle Bar */
+    .toggle-bar {
+      height: 44px;
+      padding: 0 14px;
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .toggle-title {
+      position: relative;
+      z-index: 2;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+
+    /* Segmented ON | OFF Liquid Glass Switch (Exact Reference Style) */
+    .nl-switch {
+      position: relative;
+      z-index: 2;
+      width: 96px;
+      height: 28px;
+      padding: 2px;
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      background: rgba(8, 13, 24, 0.56);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow:
+        inset 0 1.5px 4px rgba(0, 0, 0, 0.48),
+        0 1px 0 rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: border-color 0.2s ease;
+    }
+
+    .nl-switch:hover {
+      border-color: rgba(255, 255, 255, 0.28);
+    }
+
+    /* Centered 1px × 12px Vertical Divider */
+    .nl-switch::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 1px;
+      height: 12px;
+      transform: translate(-50%, -50%);
+      background: rgba(255, 255, 255, 0.22);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .nl-switch-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: calc(50% - 2px);
+      height: calc(100% - 4px);
+      border-radius: 6px;
+      /* OFF state (Right) */
+      transform: translateX(100%);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.28) 0%,
+        rgba(255, 255, 255, 0.15) 100%
+      );
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      box-shadow:
+        0 2px 6px rgba(0, 0, 0, 0.32),
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.55);
+      transition:
+        transform 0.24s cubic-bezier(0.34, 1.4, 0.64, 1),
+        background 0.22s ease,
+        border-color 0.22s ease,
+        box-shadow 0.22s ease;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* ON state (Left - Bright Yellow #FFFF00 Liquid Glass) */
+    .nl-switch.on .nl-switch-thumb {
+      transform: translateX(0);
+      background: linear-gradient(
+        180deg,
+        #FFFF5C 0%,
+        #FFFF00 52%,
+        #E6E600 100%
+      );
+      border-color: rgba(255, 255, 255, 0.92);
+      box-shadow:
+        0 2px 12px rgba(255, 255, 0, 0.45),
+        inset 0 1px 1px rgba(255, 255, 255, 0.85);
+    }
+
+    .nl-switch-opt {
+      position: relative;
+      z-index: 3;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: rgba(203, 213, 225, 0.52);
+      transition: color 0.2s ease;
+      pointer-events: none;
+      line-height: 1;
+    }
+
+    .nl-switch.on .nl-switch-opt.opt-on {
+      color: #111827;
+      font-weight: 700;
+    }
+
+    .nl-switch:not(.on) .nl-switch-opt.opt-off {
+      color: #f8fafc;
+      font-weight: 700;
+    }
+
+    /* Download Action Cards Stack */
+    .action-cards-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .action-card {
+      height: 60px;
+      padding: 0 16px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    /* YT-DLP Card (#00B4DF Cyan-Blue Accent) */
+    #cardYtdlp {
+      background:
+        radial-gradient(
+          200px circle at var(--mx) var(--my),
+          rgba(255, 255, 255, 0.16) 0%,
+          rgba(0, 180, 223, 0.16) 45%,
+          transparent 76%
+        ),
+        linear-gradient(
+          160deg,
+          rgba(255, 255, 255, 0.12) 0%,
+          rgba(0, 180, 223, 0.11) 50%,
+          rgba(8, 13, 24, 0.46) 100%
+        );
+    }
+
+    #cardYtdlp:hover {
+      transform: translateY(-1px);
+      border-color: rgba(0, 180, 223, 0.72);
+      box-shadow:
+        0 10px 26px rgba(0, 180, 223, 0.28),
+        inset 0 1px 1px rgba(255, 255, 255, 0.42);
+    }
+
+    #cardYtdlp.running {
+      border-color: var(--yt-color);
+      box-shadow:
+        0 10px 28px rgba(0, 180, 223, 0.42),
+        inset 0 1px 1px rgba(255, 255, 255, 0.48);
+    }
+
+    /* FFMPEG Card (#F4962E Warm Amber-Orange Accent) */
+    #cardFfmpeg {
+      background:
+        radial-gradient(
+          200px circle at var(--mx) var(--my),
+          rgba(255, 255, 255, 0.16) 0%,
+          rgba(244, 150, 46, 0.16) 45%,
+          transparent 76%
+        ),
+        linear-gradient(
+          160deg,
+          rgba(255, 255, 255, 0.12) 0%,
+          rgba(244, 150, 46, 0.11) 50%,
+          rgba(8, 13, 24, 0.46) 100%
+        );
+    }
+
+    #cardFfmpeg:hover {
+      transform: translateY(-1px);
+      border-color: rgba(244, 150, 46, 0.72);
+      box-shadow:
+        0 10px 26px rgba(244, 150, 46, 0.28),
+        inset 0 1px 1px rgba(255, 255, 255, 0.42);
+    }
+
+    #cardFfmpeg.running {
+      border-color: var(--ff-color);
+      box-shadow:
+        0 10px 28px rgba(244, 150, 46, 0.42),
+        inset 0 1px 1px rgba(255, 255, 255, 0.48);
+    }
+
+    .action-card:active {
+      transform: translateY(0) scale(0.996);
+    }
+
+    .card-info {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+      padding-right: 14px;
+    }
+
+    .card-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+
+    .card-sub {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* 38x38px Liquid Glass Cute Icon Badges */
+    .card-badge {
+      position: relative;
+      z-index: 2;
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      overflow: hidden;
+      transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s ease;
+    }
+
+    /* Top Liquid Gloss Arc on Badge */
+    .card-badge::after {
+      content: "";
+      position: absolute;
+      top: 1px;
+      left: 4px;
+      right: 4px;
+      height: 44%;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.52) 0%, transparent 100%);
+      pointer-events: none;
+    }
+
+    .action-card:hover .card-badge {
+      transform: scale(1.07) rotate(-4deg);
+    }
+
+    .action-card.running .card-badge {
+      animation: badgeFloat 1.1s ease-in-out infinite;
+    }
+
+    @keyframes badgeFloat {
+      0%, 100% {
+        transform: translateY(0) scale(1);
+      }
+      50% {
+        transform: translateY(-2px) scale(1.07);
+      }
+    }
+
+    .card-badge.yt {
+      background: linear-gradient(145deg, #33D1F5 0%, #00B4DF 52%, #0089AB 100%);
+      box-shadow:
+        0 4px 14px rgba(0, 180, 223, 0.48),
+        inset 0 1px 1px rgba(255, 255, 255, 0.65);
+    }
+
+    .card-badge.ff {
+      background: linear-gradient(145deg, #FFB057 0%, #F4962E 52%, #D47512 100%);
+      box-shadow:
+        0 4px 14px rgba(244, 150, 46, 0.48),
+        inset 0 1px 1px rgba(255, 255, 255, 0.65);
+    }
+
+    .card-badge svg {
+      position: relative;
+      z-index: 1;
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      display: block;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.18));
+    }
+
+    /* 3px Bottom Progress Bar */
+    .card-progress-bar {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      height: 3px;
+      width: 0%;
+      transition: width 0.2s linear;
+      z-index: 3;
+    }
+
+    #progYtdlp {
+      background: linear-gradient(90deg, #00B4DF, #5CE0FF);
+      box-shadow: 0 0 10px rgba(0, 180, 223, 0.85);
+    }
+
+    #progFfmpeg {
+      background: linear-gradient(90deg, #F4962E, #FFC070);
+      box-shadow: 0 0 10px rgba(244, 150, 46, 0.85);
+    }
+
+    /* ==========================================================================
+       Settings Tab Components (Clean Two-Card Layout)
+       ========================================================================== */
+    .settings-box {
+      width: 100%;
+      padding: 15px 16px;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .settings-box-header {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .settings-val {
+      font-size: 12.5px;
+      color: var(--accent-cyan);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .lang-group {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .lang-pill {
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+
+    .lang-pill:hover {
+      color: var(--text-bright);
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+
+    .lang-pill.active {
+      background: linear-gradient(
+        180deg,
+        rgba(0, 149, 255, 0.36) 0%,
+        rgba(0, 149, 255, 0.16) 100%
+      );
+      border-color: rgba(56, 189, 248, 0.68);
+      box-shadow:
+        0 4px 12px rgba(0, 149, 255, 0.2),
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.38);
+      color: var(--text-bright);
+      font-weight: 600;
+    }
+
+    .settings-slider-wrap {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      height: 20px;
+    }
+
+    /* ==========================================================================
+       Console Tab Components
+       ========================================================================== */
+    .console-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 14px 16px;
+      border-radius: 12px;
+      gap: 10px;
+    }
+
+    .console-header {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .console-box {
+      position: relative;
+      z-index: 2;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 10px 12px;
+      border-radius: 9px;
+      background: rgba(6, 9, 16, 0.62);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+      font-family: Consolas, "Microsoft JhengHei", monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-secondary);
+      user-select: text;
+    }
+
+    /* Custom Thin Glass Scrollbar */
+    .console-box::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .console-box::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 999px;
+    }
+
+    .console-box::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+    }
+
+    .console-box::-webkit-scrollbar-thumb:hover {
+      background: rgba(56, 189, 248, 0.48);
+    }
+
+    .console-line {
+      margin-bottom: 3px;
+      word-break: break-all;
+    }
+
+    /* ==========================================================================
+       Tray Restore Bar & Subtle Toast Pill
+       ========================================================================== */
+    .restore-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 30;
+      padding: 9px 20px;
+      border-radius: 999px;
+      background: rgba(14, 20, 32, 0.84);
+      backdrop-filter: blur(18px) saturate(165%);
+      -webkit-backdrop-filter: blur(18px) saturate(165%);
+      border: 1px solid rgba(56, 189, 248, 0.48);
+      color: var(--text-bright);
+      font-size: 12.5px;
+      cursor: pointer;
+      display: none;
+      box-shadow:
+        0 12px 32px rgba(0, 0, 0, 0.55),
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.32);
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+
+    .restore-bar:hover {
+      border-color: rgba(56, 189, 248, 0.82);
+      transform: translateX(-50%) translateY(-2px);
+    }
+
+    .restore-bar.visible {
+      display: block;
+    }
+
+    .toast-pill {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-10px);
+      z-index: 40;
+      padding: 7px 18px;
+      border-radius: 999px;
+      background: rgba(12, 18, 30, 0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(56, 189, 248, 0.48);
+      box-shadow:
+        0 8px 24px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0.5px rgba(255, 255, 255, 0.28);
+      color: var(--text-bright);
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .toast-pill.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ==========================================================================
+       Native Desktop WebView2 Frameless Window Overrides
+       ========================================================================== */
+    body.desktop-mode {
+      background-color: #060911;
+    }
+
+    body.desktop-mode .ambient-backdrop {
+      border-radius: 16px;
+    }
+
+    body.desktop-mode .window-stage {
+      width: 100vw;
+      height: 100vh;
+      transform: none !important;
+    }
+
+    body.desktop-mode .loader-window {
+      width: 100%;
+      height: 100%;
+      border-radius: 16px;
+      transform: none !important;
+      box-shadow:
+        inset 0 1px 1px rgba(255, 255, 255, 0.28),
+        inset 0 -1px 1px rgba(255, 255, 255, 0.06);
+    }
+
+    .status-dot.loading {
+      background-color: #fbbf24;
+      box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
+      animation: dotPulse 1.2s ease-in-out infinite;
+    }
+
+    .status-dot.error {
+      background-color: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+    }
+
+    @keyframes dotPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.85); }
+    }
+  </style>
+</head>
+<body>
+  <!-- Static Deep Ambient Neon-Rain Backdrop -->
+  <div class="ambient-backdrop" aria-hidden="true"></div>
+
+  <!-- Toast Notification Pill -->
+  <div class="toast-pill" id="toastPill" role="status" aria-live="polite"></div>
+
+  <!-- Minimized / Closed Tray Restore Pill -->
+  <button class="restore-bar" id="restoreBar" type="button" onclick="restoreWindow()">
+    <span id="lblTrayRestore">動畫瘋 m3u8 影片下載器 · 點擊還原視窗</span>
+  </button>
+
+  <!-- Responsive Scaling Stage (Handles viewport scaling independently from window drag) -->
+  <div class="window-stage" id="windowStage">
+    <!-- Exact 840x510 Two-Column Liquid Glass Window -->
+    <div class="loader-window" id="loaderWindow">
+
+      <!-- ==================== LEFT SIDEBAR (216px) ==================== -->
+      <aside class="sidebar">
+        <!-- Brand Logo with Offline Fallback -->
+        <div class="brand-wrap">
+          <img
+            src="/logo.svg"
+            alt="動畫瘋"
+            class="brand-logo"
+            draggable="false"
+            onerror="handleLogoError(this)"
+          />
+          <div class="brand-fallback" id="logoOfflineFallback">
+            <div class="brand-fallback-icon">瘋</div>
+            <span class="brand-fallback-text">動畫瘋</span>
+          </div>
+        </div>
+
+        <!-- Navigation Menu -->
+        <nav class="nav-list" aria-label="主導覽">
+          <div class="nav-item active" data-tab="downloader" onclick="switchTab('downloader', this)">Downloader</div>
+          <div class="nav-item" data-tab="settings" onclick="switchTab('settings', this)">Settings</div>
+          <div class="nav-item" data-tab="console" onclick="switchTab('console', this)">Console</div>
+        </nav>
+
+        <!-- Bundled Core Module Status -->
+        <div class="version-list">
+          <div class="version-item">
+            <span class="status-dot loading" id="dotFfmpeg"></span>
+            <span id="verFfmpeg">FFMPEG (初始化...)</span>
+          </div>
+          <div class="version-item">
+            <span class="status-dot loading" id="dotYtdlp"></span>
+            <span id="verYtdlp">YT-DLP (初始化...)</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ==================== RIGHT MAIN AREA (568px content) ==================== -->
+      <main class="main-area">
+        <!-- Top Header Bar -->
+        <header class="main-header">
+          <h1 class="page-title-text" id="activePageTitle">Downloader</h1>
+          <div class="win-controls-row">
+            <span class="top-opacity-label" id="lblTopOpacity">透光度</span>
+            <input
+              type="range"
+              id="topOpacitySlider"
+              class="liquid-slider"
+              style="width: 88px;"
+              min="15"
+              max="85"
+              value="48"
+              aria-label="透光度"
+              oninput="setOpacity(this.value)"
+            />
+            <span class="top-opacity-val" id="topOpacityVal">48%</span>
+            <button class="win-btn" type="button" title="Minimize" onclick="minimizeWindow()">—</button>
+            <button class="win-btn close" type="button" title="Close" onclick="closeWindow()">✕</button>
+          </div>
+        </header>
+
+        <!-- Tab Viewport Container -->
+        <div class="tab-content">
+
+          <!-- ========== TAB 1: DOWNLOADER ========== -->
+          <section class="tab-panel active" id="tab-downloader">
+            <!-- 1. URL Field Group -->
+            <div class="field-group">
+              <div class="field-header-row">
+                <label class="field-label-bright" id="lblUrl" for="urlInput">m3u8串聯鏈接/網址</label>
+                <div class="inline-btn-group">
+                  <button class="mini-inline-btn" type="button" id="btnSample" onclick="loadSampleUrl()">載入範例</button>
+                  <button class="mini-inline-btn" type="button" id="btnClear" onclick="clearUrlInput()">清空</button>
+                </div>
+              </div>
+              <div class="liquid-well liquid-trackable">
+                <input
+                  type="text"
+                  id="urlInput"
+                  value=""
+                  placeholder="https://bahamut.akamaized.net/.../playlist.m3u8?token=..."
+                />
+              </div>
+            </div>
+
+            <!-- 2. Two-Column Equal Grid Row (Video Title & Save Directory) -->
+            <div class="field-grid-2">
+              <div class="field-group">
+                <div class="field-header-row">
+                  <label class="field-label-bright" id="lblFilename" for="titleInput">影片標題</label>
+                </div>
+                <div class="liquid-well liquid-trackable">
+                  <input type="text" id="titleInput" value="" placeholder="動畫_第01話" />
+                  <span class="ext-suffix">.mp4</span>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-header-row">
+                  <label class="field-label-bright" id="lblSavedir" for="dirInput">儲存目錄</label>
+                </div>
+                <div class="liquid-well liquid-trackable">
+                  <input type="text" id="dirInput" value="C:\Users\Downloads\Anime" />
+                  <button class="browse-btn" type="button" id="btnBrowse" onclick="browseDirectory()">選擇</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. Anti-Leech Toggle Bar with Segmented ON | OFF Switch -->
+            <div class="liquid-surface toggle-bar liquid-trackable">
+              <span class="toggle-title" id="lblReferer">防盜鏈標頭 (Origin / Referer)</span>
+              <div
+                class="nl-switch on"
+                id="refererSwitch"
+                role="switch"
+                tabindex="0"
+                aria-checked="true"
+                aria-labelledby="lblReferer"
+                onclick="toggleReferer()"
+                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleReferer();}"
+              >
+                <div class="nl-switch-thumb"></div>
+                <span class="nl-switch-opt opt-on">ON</span>
+                <span class="nl-switch-opt opt-off">OFF</span>
+              </div>
+            </div>
+
+            <!-- 4. Download Action Cards Stack -->
+            <div class="action-cards-stack">
+              <!-- YT-DLP Card (#00B4DF) -->
+              <div class="liquid-surface action-card liquid-trackable" id="cardYtdlp" onclick="triggerDownload('ytdlp')">
+                <div class="card-info">
+                  <div class="card-title" id="titleYtdlp">YT-DLP 多線程下載</div>
+                  <div class="card-sub" id="subYtdlp">已啟用防盜鏈標頭 (Origin / Referer)</div>
+                </div>
+                <div class="card-badge yt" aria-hidden="true">
+                  <!-- Cute Cat-Ear Cloud Download SVG (Explicit 22x22 dimensions) -->
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M6.4 9.5L7.3 5.8C7.45 5.25 8.15 5.1 8.5 5.55L10.3 7.8C10.85 7.65 11.42 7.58 12 7.58C12.58 7.58 13.15 7.65 13.7 7.8L15.5 5.55C15.85 5.1 16.55 5.25 16.7 5.8L17.6 9.5C19.35 10.25 20.5 11.95 20.5 13.9C20.5 16.55 18.35 18.7 15.7 18.7H8.3C5.65 18.7 3.5 16.55 3.5 13.9C3.5 11.95 4.65 10.25 6.4 9.5Z"
+                      fill="rgba(255,255,255,0.28)"
+                      stroke="#FFFFFF"
+                      stroke-width="1.65"
+                      stroke-linejoin="round"
+                    />
+                    <circle cx="9.6" cy="12.2" r="0.95" fill="#FFFFFF" />
+                    <circle cx="14.4" cy="12.2" r="0.95" fill="#FFFFFF" />
+                    <path
+                      d="M12 12.6V16.2M12 16.2L10.4 14.7M12 16.2L13.6 14.7"
+                      stroke="#FFFFFF"
+                      stroke-width="1.65"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </div>
+                <div class="card-progress-bar" id="progYtdlp"></div>
+              </div>
+
+              <!-- FFMPEG Card (#F4962E) -->
+              <div class="liquid-surface action-card liquid-trackable" id="cardFfmpeg" onclick="triggerDownload('ffmpeg')">
+                <div class="card-info">
+                  <div class="card-title" id="titleFfmpeg">FFMPEG 直接轉錄</div>
+                  <div class="card-sub" id="subFfmpeg">已啟用防盜鏈標頭 (Origin / Referer)</div>
+                </div>
+                <div class="card-badge ff" aria-hidden="true">
+                  <!-- Cute Magic Sparkle Clapperboard SVG (Explicit 22x22 dimensions) -->
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <rect
+                      x="4.2"
+                      y="7.2"
+                      width="15.6"
+                      height="12.2"
+                      rx="3.2"
+                      fill="rgba(255,255,255,0.26)"
+                      stroke="#FFFFFF"
+                      stroke-width="1.65"
+                    />
+                    <path d="M4.5 10.6H19.5" stroke="#FFFFFF" stroke-width="1.5" />
+                    <path
+                      d="M8.2 7.3L9.8 10.5M13.6 7.3L15.2 10.5"
+                      stroke="#FFFFFF"
+                      stroke-width="1.55"
+                      stroke-linecap="round"
+                    />
+                    <path
+                      d="M12 12.2L12.8 13.9L14.6 14.65L12.8 15.4L12 17.1L11.2 15.4L9.4 14.65L11.2 13.9L12 12.2Z"
+                      fill="#FFFFFF"
+                    />
+                    <circle cx="17.8" cy="4.8" r="1.05" fill="#FFFFFF" />
+                  </svg>
+                </div>
+                <div class="card-progress-bar" id="progFfmpeg"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ========== TAB 2: SETTINGS (ONLY 2 CARDS) ========== -->
+          <section class="tab-panel" id="tab-settings">
+            <!-- Card 1: Interface Language -->
+            <div class="liquid-surface settings-box liquid-trackable">
+              <div class="settings-box-header">
+                <span class="field-label-bright" id="lblSetLang">介面語言 / Language</span>
+              </div>
+              <div class="lang-group">
+                <button class="lang-pill active" type="button" onclick="switchLanguage('zh-TW', this)">繁體中文</button>
+                <button class="lang-pill" type="button" onclick="switchLanguage('zh-CN', this)">简体中文</button>
+                <button class="lang-pill" type="button" onclick="switchLanguage('en', this)">English</button>
+              </div>
+            </div>
+
+            <!-- Card 2: Frosted Blur Radius -->
+            <div class="liquid-surface settings-box liquid-trackable">
+              <div class="settings-box-header">
+                <span class="field-label-bright" id="lblSetBlur">磨砂模糊度</span>
+                <span class="settings-val" id="setBlurVal">22px</span>
+              </div>
+              <div class="settings-slider-wrap">
+                <input
+                  type="range"
+                  id="setBlurSlider"
+                  class="liquid-slider"
+                  style="width: 100%;"
+                  min="0"
+                  max="40"
+                  value="22"
+                  aria-label="磨砂模糊度"
+                  oninput="setBlur(this.value)"
+                />
+              </div>
+            </div>
+          </section>
+
+          <!-- ========== TAB 3: CONSOLE ========== -->
+          <section class="tab-panel" id="tab-console">
+            <div class="liquid-surface console-panel liquid-trackable">
+              <div class="console-header">
+                <span class="field-label-bright" id="lblConsoleHeader">核心執行日誌 (STDOUT / STDERR)</span>
+                <button class="mini-inline-btn" type="button" id="btnClearConsole" onclick="clearConsoleLogs()">清空日誌</button>
+              </div>
+              <div class="console-box" id="consoleOutput"></div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- Bottom Footer Bar -->
+        <footer class="main-footer">
+          <div class="clock-text" id="liveClock">2026/11/19  09:33:00</div>
+        </footer>
+      </main>
+
+    </div>
+  </div>
+
+  <script>
+    /* ==========================================================================
+       Application State & Constants
+       ========================================================================== */
+    const CONCURRENCY = 1; // Enforced 1-thread segment concurrency
+    const IS_DESKTOP = Boolean(window.chrome && window.chrome.webview);
+
+    if (IS_DESKTOP) {
+      document.body.classList.add('desktop-mode');
+    }
+
+    let currentTab = 'downloader';
+    let currentLang = 'zh-TW';
+    let currentOpacity = 48;
+    let currentBlur = 22;
+    let refererEnabled = true;
+    let activeEngine = null;
+    let toolsReady = false;
+    let ffmpegVersion = '';
+    let ytdlpVersion = '';
+    let toastTimer = null;
+    let configSaveTimer = null;
+    let eventSource = null;
+
+    /* ==========================================================================
+       Internationalization Dictionary (zh-TW / zh-CN / en)
+       ========================================================================== */
+    const I18N = {
+      'zh-TW': {
+        topOpacity: '透光度',
+        lblUrl: 'm3u8串聯鏈接/網址',
+        btnSample: '載入範例',
+        btnClear: '清空',
+        lblFilename: '影片標題',
+        lblSavedir: '儲存目錄',
+        btnBrowse: '選擇',
+        lblReferer: '防盜鏈標頭 (Origin / Referer)',
+        titleYtdlp: 'YT-DLP 單線程穩定下載',
+        titleFfmpeg: 'FFMPEG 直接轉錄',
+        subRefererOn: '已啟用防盜鏈標頭 (Origin / Referer)',
+        subRefererOff: '已關閉防盜鏈標頭 (直接連線)',
+        subDone: '下載與封裝完成 · 點擊重新執行',
+        subDownloading: '正在下載分片',
+        subMerging: '正在封裝合併 MP4...',
+        subPreparing: '正在連線並解析串流...',
+        lblSetLang: '介面語言 / Language',
+        lblSetBlur: '磨砂模糊度',
+        lblConsoleHeader: '核心執行日誌 (STDOUT / STDERR)',
+        btnClearConsole: '清空日誌',
+        lblTrayRestore: '動畫瘋 m3u8 影片下載器 · 點擊還原視窗',
+        tagSys: '[提示]',
+        tagProg: '[進度]',
+        tagDone: '[完成]',
+        tagWarn: '[警告]',
+        tagErr: '[錯誤]',
+        toastSample: '已載入動畫瘋測試範例連結與標題',
+        toastCleared: '已清空串流連結欄位',
+        toastEmptyUrl: '請先輸入有效的 m3u8 串聯鏈接/網址',
+        toastToolsWait: '內建工具正在解壓初始化中，請稍候...',
+        toastStop: '已中止目前下載任務',
+        toastDone: '影片下載與 MP4 封裝完成',
+        toastError: '下載失敗，請切換至 Console 查看詳細日誌',
+        toastDir: '已切換儲存目錄',
+        toastConsoleCleared: '已清空執行日誌',
+        logInit: '內建模組就緒',
+        logSample: '已載入測試範例網址與影片標題。',
+        logRefererOn: '防盜鏈標頭狀態已切換為：開啟 (附帶 Origin / Referer)',
+        logRefererOff: '防盜鏈標頭狀態已切換為：關閉 (直接連線)',
+        logStart: '啟動下載引擎',
+        logFinish: '任務完成，已輸出檔案至',
+        logAbort: '使用者手動中止任務。'
+      },
+      'zh-CN': {
+        topOpacity: '透光度',
+        lblUrl: 'm3u8串联链接/网址',
+        btnSample: '载入范例',
+        btnClear: '清空',
+        lblFilename: '影片标题',
+        lblSavedir: '储存目录',
+        btnBrowse: '选择',
+        lblReferer: '防盗链标头 (Origin / Referer)',
+        titleYtdlp: 'YT-DLP 单线程稳定下载',
+        titleFfmpeg: 'FFMPEG 直接转录',
+        subRefererOn: '已启用防盗链标头 (Origin / Referer)',
+        subRefererOff: '已关闭防盗链标头 (直接连接)',
+        subDone: '下载与封装完成 · 点击重新执行',
+        subDownloading: '正在下载分片',
+        subMerging: '正在封装合并 MP4...',
+        subPreparing: '正在连接并解析串流...',
+        lblSetLang: '界面语言 / Language',
+        lblSetBlur: '磨砂模糊度',
+        lblConsoleHeader: '核心执行日志 (STDOUT / STDERR)',
+        btnClearConsole: '清空日志',
+        lblTrayRestore: '动画疯 m3u8 影片下载器 · 点击还原窗口',
+        tagSys: '[提示]',
+        tagProg: '[进度]',
+        tagDone: '[完成]',
+        tagWarn: '[警告]',
+        tagErr: '[错误]',
+        toastSample: '已载入动画疯测试范例链接与标题',
+        toastCleared: '已清空串联链接栏位',
+        toastEmptyUrl: '请先输入有效的 m3u8 串联链接/网址',
+        toastToolsWait: '内建工具正在解压初始化中，请稍候...',
+        toastStop: '已中止当前下载任务',
+        toastDone: '影片下载与 MP4 封装完成',
+        toastError: '下载失败，请切换至 Console 查看详细日志',
+        toastDir: '已切换储存目录',
+        toastConsoleCleared: '已清空执行日志',
+        logInit: '内建模块就绪',
+        logSample: '已载入测试范例网址与影片标题。',
+        logRefererOn: '防盗链标头状态已切换为：开启 (附带 Origin / Referer)',
+        logRefererOff: '防盗链标头状态已切换为：关闭 (直接连接)',
+        logStart: '启动下载引擎',
+        logFinish: '任务完成，已输出文件至',
+        logAbort: '用户手动中止任务。'
+      },
+      'en': {
+        topOpacity: 'Opacity',
+        lblUrl: 'm3u8 Stream Link / URL',
+        btnSample: 'Load Sample',
+        btnClear: 'Clear',
+        lblFilename: 'Video Title',
+        lblSavedir: 'Save Directory',
+        btnBrowse: 'Browse',
+        lblReferer: 'Anti-Leech Header (Origin / Referer)',
+        titleYtdlp: 'YT-DLP Single-Thread Download',
+        titleFfmpeg: 'FFMPEG Direct Remux',
+        subRefererOn: 'Anti-Leech Header Enabled (Origin / Referer)',
+        subRefererOff: 'Anti-Leech Header Disabled (Direct Connection)',
+        subDone: 'Completed · Click to Re-run',
+        subDownloading: 'Downloading segments',
+        subMerging: 'Merging into MP4...',
+        subPreparing: 'Connecting & parsing playlist...',
+        lblSetLang: 'Interface Language / 語言',
+        lblSetBlur: 'Frosted Blur Radius',
+        lblConsoleHeader: 'Core Execution Log (STDOUT / STDERR)',
+        btnClearConsole: 'Clear Log',
+        lblTrayRestore: 'Anime m3u8 Downloader · Click to Restore',
+        tagSys: '[INFO]',
+        tagProg: '[PROG]',
+        tagDone: '[DONE]',
+        tagWarn: '[WARN]',
+        tagErr: '[ERR]',
+        toastSample: 'Loaded sample Bahamut m3u8 URL and title',
+        toastCleared: 'Cleared stream URL field',
+        toastEmptyUrl: 'Please enter a valid m3u8 stream link first',
+        toastToolsWait: 'Unpacking bundled modules, please wait...',
+        toastStop: 'Download task aborted',
+        toastDone: 'Download & MP4 remux completed',
+        toastError: 'Download failed, check Console tab for details',
+        toastDir: 'Updated save directory',
+        toastConsoleCleared: 'Console log cleared',
+        logInit: 'Bundled modules ready',
+        logSample: 'Loaded sample stream URL and video title.',
+        logRefererOn: 'Anti-leech header toggled: ON (Origin / Referer attached)',
+        logRefererOff: 'Anti-leech header toggled: OFF (Direct connection)',
+        logStart: 'Launching engine',
+        logFinish: 'Completed, saved output to',
+        logAbort: 'Task aborted by user.'
+      }
+    };
+
+    // Note: Keep exact original card title for YT-DLP matching 最終.html
+    I18N['zh-TW'].titleYtdlp = 'YT-DLP 多線程下載';
+    I18N['zh-CN'].titleYtdlp = 'YT-DLP 多线程下载';
+    I18N['en'].titleYtdlp = 'YT-DLP Multi-Thread Download';
+
+    function t(key) {
+      return (I18N[currentLang] && I18N[currentLang][key]) || I18N['zh-TW'][key] || key;
+    }
+
+    function sendNative(action) {
+      if (IS_DESKTOP && window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(JSON.stringify({ action }));
+      }
+    }
+
+    function scheduleSaveConfig() {
+      if (configSaveTimer) clearTimeout(configSaveTimer);
+      configSaveTimer = setTimeout(() => {
+        fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lang: currentLang,
+            opacity: currentOpacity,
+            blur: currentBlur,
+            refererEnabled: refererEnabled,
+            saveDir: document.getElementById('dirInput').value.trim()
+          })
+        }).catch(() => {});
+      }, 250);
+    }
+
+    /* ==========================================================================
+       Logo Fallback & Tab / Language Switching
+       ========================================================================== */
+    function handleLogoError(imgEl) {
+      imgEl.style.display = 'none';
+      const fallback = document.getElementById('logoOfflineFallback');
+      if (fallback) fallback.style.display = 'flex';
+    }
+
+    function switchTab(tabName, navEl) {
+      currentTab = tabName;
+      document.querySelectorAll('.nav-item').forEach((item) => item.classList.remove('active'));
+      if (navEl) navEl.classList.add('active');
+
+      document.querySelectorAll('.tab-panel').forEach((panel) => {
+        panel.classList.toggle('active', panel.id === `tab-${tabName}`);
+      });
+
+      const titleMap = {
+        downloader: 'Downloader',
+        settings: 'Settings',
+        console: 'Console'
+      };
+      document.getElementById('activePageTitle').textContent = titleMap[tabName] || 'Downloader';
+    }
+
+    function switchLanguage(langCode, pillBtn, skipSave) {
+      currentLang = langCode;
+      document.querySelectorAll('.lang-pill').forEach((btn) => {
+        btn.classList.remove('active');
+        if (!pillBtn && btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(`'${langCode}'`)) {
+          btn.classList.add('active');
+        }
+      });
+      if (pillBtn) pillBtn.classList.add('active');
+
+      document.getElementById('lblTopOpacity').textContent = t('topOpacity');
+      document.getElementById('lblUrl').textContent = t('lblUrl');
+      document.getElementById('btnSample').textContent = t('btnSample');
+      document.getElementById('btnClear').textContent = t('btnClear');
+      document.getElementById('lblFilename').textContent = t('lblFilename');
+      document.getElementById('lblSavedir').textContent = t('lblSavedir');
+      document.getElementById('btnBrowse').textContent = t('btnBrowse');
+      document.getElementById('lblReferer').textContent = t('lblReferer');
+      document.getElementById('titleYtdlp').textContent = t('titleYtdlp');
+      document.getElementById('titleFfmpeg').textContent = t('titleFfmpeg');
+      document.getElementById('lblSetLang').textContent = t('lblSetLang');
+      document.getElementById('lblSetBlur').textContent = t('lblSetBlur');
+      document.getElementById('lblConsoleHeader').textContent = t('lblConsoleHeader');
+      document.getElementById('btnClearConsole').textContent = t('btnClearConsole');
+      document.getElementById('lblTrayRestore').textContent = t('lblTrayRestore');
+
+      syncEngineSubtitles();
+      if (!skipSave) scheduleSaveConfig();
+    }
+
+    function syncEngineSubtitles() {
+      const baseSub = refererEnabled ? t('subRefererOn') : t('subRefererOff');
+      if (activeEngine !== 'ytdlp') {
+        document.getElementById('subYtdlp').textContent = baseSub;
+      }
+      if (activeEngine !== 'ffmpeg') {
+        document.getElementById('subFfmpeg').textContent = baseSub;
+      }
+    }
+
+    /* ==========================================================================
+       Anti-Leech Switch & Glass Sliders (Opacity + Blur)
+       ========================================================================== */
+    function applyRefererUI(enabled) {
+      refererEnabled = Boolean(enabled);
+      const sw = document.getElementById('refererSwitch');
+      sw.classList.toggle('on', refererEnabled);
+      sw.setAttribute('aria-checked', String(refererEnabled));
+      syncEngineSubtitles();
+    }
+
+    function toggleReferer() {
+      applyRefererUI(!refererEnabled);
+      writeConsoleLog(t('tagSys'), '#38bdf8', refererEnabled ? t('logRefererOn') : t('logRefererOff'));
+      scheduleSaveConfig();
+    }
+
+    function updateSliderFill(sliderEl) {
+      if (!sliderEl) return;
+      const min = Number(sliderEl.min) || 0;
+      const max = Number(sliderEl.max) || 100;
+      const val = Number(sliderEl.value);
+      const pct = ((val - min) / (max - min)) * 100;
+      sliderEl.style.setProperty('--fill-pct', `${pct.toFixed(1)}%`);
+    }
+
+    function setOpacity(val, skipSave) {
+      const clamped = Math.max(15, Math.min(85, Number(val)));
+      currentOpacity = clamped;
+      document.documentElement.style.setProperty('--glass-alpha', (clamped / 100).toFixed(2));
+      const slider = document.getElementById('topOpacitySlider');
+      slider.value = clamped;
+      updateSliderFill(slider);
+      document.getElementById('topOpacityVal').textContent = `${clamped}%`;
+      if (!skipSave) scheduleSaveConfig();
+    }
+
+    function setBlur(val, skipSave) {
+      const clamped = Math.max(0, Math.min(40, Number(val)));
+      currentBlur = clamped;
+      document.documentElement.style.setProperty('--glass-blur', `${clamped}px`);
+      const slider = document.getElementById('setBlurSlider');
+      slider.value = clamped;
+      updateSliderFill(slider);
+      document.getElementById('setBlurVal').textContent = `${clamped}px`;
+      if (!skipSave) scheduleSaveConfig();
+    }
+
+    /* ==========================================================================
+       Input Helpers & Real Backend Download Engine Calls
+       ========================================================================== */
+    function loadSampleUrl() {
+      document.getElementById('urlInput').value =
+        'https://bahamut.akamaized.net/1080p/playlist.m3u8?token=baha_demo_2026';
+      document.getElementById('titleInput').value = '動畫_第01話';
+      writeConsoleLog(t('tagSys'), '#38bdf8', t('logSample'));
+      showToast(t('toastSample'));
+    }
+
+    function clearUrlInput() {
+      document.getElementById('urlInput').value = '';
+      showToast(t('toastCleared'));
+    }
+
+    async function browseDirectory() {
+      try {
+        const res = await fetch('/api/browse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ current: document.getElementById('dirInput').value.trim() })
+        });
+        const data = await res.json();
+        if (data && data.path) {
+          document.getElementById('dirInput').value = data.path;
+          showToast(`${t('toastDir')}: ${data.path}`);
+          scheduleSaveConfig();
+        }
+      } catch (err) {
+        writeConsoleLog(t('tagErr'), '#f87171', String(err));
+      }
+    }
+
+    async function triggerDownload(engine) {
+      if (!toolsReady) {
+        showToast(t('toastToolsWait'));
+        return;
+      }
+
+      const urlVal = document.getElementById('urlInput').value.trim();
+      if (!urlVal) {
+        showToast(t('toastEmptyUrl'));
+        document.getElementById('urlInput').focus();
+        return;
+      }
+
+      // Clicking the active engine aborts the current task
+      if (activeEngine === engine) {
+        await stopDownload(true);
+        return;
+      }
+
+      // Switch cleanly if another engine is running
+      if (activeEngine) {
+        await stopDownload(false);
+      }
+
+      const titleVal = document.getElementById('titleInput').value.trim();
+      const saveDir = document.getElementById('dirInput').value.trim();
+
+      setEngineRunningUI(engine, t('subPreparing'), 0);
+
+      try {
+        const res = await fetch('/api/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: urlVal,
+            title: titleVal,
+            saveDir: saveDir,
+            engine: engine,
+            refererEnabled: refererEnabled,
+            concurrency: CONCURRENCY
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          resetEngineUI();
+          const errMsg = (data && data.error) || 'Failed to start download';
+          writeConsoleLog(t('tagErr'), '#f87171', errMsg);
+          showToast(errMsg);
+          return;
+        }
+        scheduleSaveConfig();
+      } catch (err) {
+        resetEngineUI();
+        writeConsoleLog(t('tagErr'), '#f87171', String(err));
+        showToast(t('toastError'));
+      }
+    }
+
+    function setEngineRunningUI(engine, subtitleText, pct) {
+      activeEngine = engine;
+      const cardEl = document.getElementById(engine === 'ytdlp' ? 'cardYtdlp' : 'cardFfmpeg');
+      const subEl = document.getElementById(engine === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
+      const progEl = document.getElementById(engine === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
+      cardEl.classList.add('running');
+      if (typeof pct === 'number') {
+        progEl.style.width = `${Math.max(0, Math.min(100, pct)).toFixed(1)}%`;
+      }
+      if (subtitleText) {
+        subEl.textContent = subtitleText;
+      }
+    }
+
+    function resetEngineUI() {
+      ['cardYtdlp', 'cardFfmpeg'].forEach((id) => document.getElementById(id).classList.remove('running'));
+      ['progYtdlp', 'progFfmpeg'].forEach((id) => (document.getElementById(id).style.width = '0%'));
+      activeEngine = null;
+      syncEngineSubtitles();
+    }
+
+    async function stopDownload(notifyUser) {
+      try {
+        await fetch('/api/stop', { method: 'POST' });
+      } catch (_) {}
+      resetEngineUI();
+      if (notifyUser) {
+        showToast(t('toastStop'));
+      }
+    }
+
+    /* ==========================================================================
+       Server-Sent Events (Real-Time Logs, Progress, Module Status)
+       ========================================================================== */
+    function updateModuleBadges(ready, ffVer, ytVer, failed) {
+      toolsReady = Boolean(ready);
+      const dotF = document.getElementById('dotFfmpeg');
+      const dotY = document.getElementById('dotYtdlp');
+      const lblF = document.getElementById('verFfmpeg');
+      const lblY = document.getElementById('verYtdlp');
+
+      if (failed) {
+        dotF.className = 'status-dot error';
+        dotY.className = 'status-dot error';
+        lblF.textContent = 'FFMPEG (錯誤)';
+        lblY.textContent = 'YT-DLP (錯誤)';
+        return;
+      }
+
+      if (ready) {
+        ffmpegVersion = ffVer || 'v6.1.1';
+        ytdlpVersion = ytVer || 'v2026';
+        dotF.className = 'status-dot';
+        dotY.className = 'status-dot';
+        lblF.textContent = `FFMPEG (${ffmpegVersion})`;
+        lblY.textContent = `YT-DLP (${ytdlpVersion})`;
+      } else {
+        dotF.className = 'status-dot loading';
+        dotY.className = 'status-dot loading';
+      }
+    }
+
+    function connectEventStream() {
+      if (eventSource) {
+        eventSource.close();
+      }
+      eventSource = new EventSource('/api/events');
+
+      eventSource.addEventListener('ready', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          updateModuleBadges(d.ready, d.ffmpegVersion, d.ytdlpVersion, d.failed);
+        } catch (_) {}
+      });
+
+      eventSource.addEventListener('log', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          writeConsoleLog(d.tag || t('tagSys'), d.color || '#38bdf8', d.message || '', d.ts);
+        } catch (_) {}
+      });
+
+      eventSource.addEventListener('progress', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (!activeEngine || activeEngine !== d.engine) return;
+          const subEl = document.getElementById(d.engine === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
+          const progEl = document.getElementById(d.engine === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
+
+          if (d.merging) {
+            progEl.style.width = '99%';
+            subEl.textContent = t('subMerging');
+            return;
+          }
+
+          const pct = Math.max(0, Math.min(100, Number(d.percent) || 0));
+          progEl.style.width = `${pct.toFixed(1)}%`;
+
+          if (d.speed && d.percent >= 0) {
+            subEl.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}% (${d.speed})`;
+          } else if (d.detail) {
+            subEl.textContent = `${t('subDownloading')} · ${d.detail}`;
+          } else {
+            subEl.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}%`;
+          }
+        } catch (_) {}
+      });
+
+      eventSource.addEventListener('done', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          const eng = d.engine || activeEngine;
+          if (eng) {
+            const cardEl = document.getElementById(eng === 'ytdlp' ? 'cardYtdlp' : 'cardFfmpeg');
+            const subEl = document.getElementById(eng === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
+            const progEl = document.getElementById(eng === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
+            progEl.style.width = '100%';
+            subEl.textContent = t('subDone');
+            showToast(t('toastDone'));
+            setTimeout(() => {
+              cardEl.classList.remove('running');
+              progEl.style.width = '0%';
+              activeEngine = null;
+              syncEngineSubtitles();
+            }, 1600);
+          }
+        } catch (_) {}
+      });
+
+      eventSource.addEventListener('aborted', () => {
+        resetEngineUI();
+      });
+
+      eventSource.addEventListener('error_event', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          resetEngineUI();
+          showToast(d.message || t('toastError'));
+        } catch (_) {
+          resetEngineUI();
+          showToast(t('toastError'));
+        }
+      });
+    }
+
+    /* ==========================================================================
+       Console Logging, Toast & Window Visibility Controls
+       ========================================================================== */
+    function writeConsoleLog(tag, tagColor, message, customTs) {
+      const box = document.getElementById('consoleOutput');
+      let ts = customTs;
+      if (!ts) {
+        const now = new Date();
+        ts =
+          String(now.getHours()).padStart(2, '0') +
+          ':' +
+          String(now.getMinutes()).padStart(2, '0') +
+          ':' +
+          String(now.getSeconds()).padStart(2, '0');
+      }
+
+      const line = document.createElement('div');
+      line.className = 'console-line';
+      line.innerHTML = `<span style="color:#64748b;">[${escapeHtml(ts)}]</span> <span style="color:${tagColor};font-weight:600;">${escapeHtml(tag)}</span> ${escapeHtml(message)}`;
+      box.appendChild(line);
+
+      // Keep console DOM responsive (cap at 600 lines)
+      while (box.childElementCount > 600) {
+        box.removeChild(box.firstElementChild);
+      }
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearConsoleLogs() {
+      document.getElementById('consoleOutput').innerHTML = '';
+      showToast(t('toastConsoleCleared'));
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function showToast(msg) {
+      const pill = document.getElementById('toastPill');
+      pill.textContent = msg;
+      pill.classList.add('show');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => pill.classList.remove('show'), 2400);
+    }
+
+    function minimizeWindow() {
+      if (IS_DESKTOP) {
+        sendNative('minimize');
+        return;
+      }
+      document.getElementById('windowStage').classList.add('is-hidden');
+      document.getElementById('restoreBar').classList.add('visible');
+    }
+
+    function closeWindow() {
+      if (IS_DESKTOP) {
+        sendNative('close');
+        return;
+      }
+      document.getElementById('windowStage').classList.add('is-hidden');
+      document.getElementById('restoreBar').classList.add('visible');
+    }
+
+    function restoreWindow() {
+      document.getElementById('windowStage').classList.remove('is-hidden');
+      document.getElementById('restoreBar').classList.remove('visible');
+    }
+
+    /* ==========================================================================
+       Live Date & Clock
+       ========================================================================== */
+    function updateClock() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const hh = String(now.getHours()).padStart(2, '0');
+      const min = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('liveClock').textContent = `${yyyy}/${mm}/${dd}  ${hh}:${min}:${ss}`;
+    }
+
+    /* ==========================================================================
+       Responsive Stage Scaling (Browser Fallback Mode Only)
+       ========================================================================== */
+    let currentStageScale = 1;
+
+    function updateStageScale() {
+      if (IS_DESKTOP) {
+        currentStageScale = 1;
+        document.documentElement.style.setProperty('--stage-scale', '1');
+        return;
+      }
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      if (vw < 880 || vh < 550) {
+        const scaleX = (vw - 32) / 840;
+        const scaleY = (vh - 32) / 510;
+        currentStageScale = Math.min(1, Math.max(0.4, Math.min(scaleX, scaleY)));
+      } else {
+        currentStageScale = 1;
+      }
+      document.documentElement.style.setProperty('--stage-scale', currentStageScale.toFixed(4));
+    }
+
+    /* ==========================================================================
+       Liquid Glass Pointer Specular Tracking
+       ========================================================================== */
+    function initLiquidTracking() {
+      document.querySelectorAll('.liquid-trackable').forEach((el) => {
+        el.addEventListener('mousemove', (e) => {
+          const rect = el.getBoundingClientRect();
+          if (!rect.width || !rect.height) return;
+          const x = ((e.clientX - rect.left) / rect.width) * 100;
+          const y = ((e.clientY - rect.top) / rect.height) * 100;
+          el.style.setProperty('--mx', `${x.toFixed(1)}%`);
+          el.style.setProperty('--my', `${y.toFixed(1)}%`);
+        });
+
+        el.addEventListener('mouseleave', () => {
+          el.style.setProperty('--mx', '50%');
+          el.style.setProperty('--my', '0%');
+        });
+      });
+    }
+
+    /* ==========================================================================
+       Borderless Window Dragging (Native OS Drag in WebView2, CSS Drag in Browser)
+       ========================================================================== */
+    function initWindowDragging() {
+      const win = document.getElementById('loaderWindow');
+      let dragging = false;
+      let startClientX = 0;
+      let startClientY = 0;
+      let baseX = 0;
+      let baseY = 0;
+      let curX = 0;
+      let curY = 0;
+
+      win.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const interactive = e.target.closest(
+          'input, button, .nl-switch, .action-card, .nav-item, .lang-pill, .console-box, .liquid-slider'
+        );
+        if (interactive) return;
+
+        if (IS_DESKTOP) {
+          sendNative('drag');
+          return;
+        }
+
+        dragging = true;
+        win.classList.add('is-dragging');
+        startClientX = e.clientX;
+        startClientY = e.clientY;
+        baseX = curX;
+        baseY = curY;
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const dx = (e.clientX - startClientX) / currentStageScale;
+        const dy = (e.clientY - startClientY) / currentStageScale;
+        curX = baseX + dx;
+        curY = baseY + dy;
+        document.documentElement.style.setProperty('--drag-x', `${curX.toFixed(1)}px`);
+        document.documentElement.style.setProperty('--drag-y', `${curY.toFixed(1)}px`);
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        win.classList.remove('is-dragging');
+      });
+    }
+
+    /* ==========================================================================
+       Clean Desktop Context Menu (Allow Copy/Paste inside Inputs & Console Only)
+       ========================================================================== */
+    document.addEventListener('contextmenu', (e) => {
+      if (!e.target.closest('input, textarea, .console-box')) {
+        e.preventDefault();
+      }
+    });
+
+    /* ==========================================================================
+       Bootstrap & Hydration from Backend
+       ========================================================================== */
+    async function bootstrap() {
+      window.addEventListener('resize', updateStageScale);
+      updateStageScale();
+      setOpacity(48, true);
+      setBlur(22, true);
+      updateClock();
+      setInterval(updateClock, 1000);
+      initLiquidTracking();
+      initWindowDragging();
+
+      document.getElementById('dirInput').addEventListener('change', scheduleSaveConfig);
+
+      connectEventStream();
+
+      try {
+        const res = await fetch('/api/init');
+        const data = await res.json();
+        if (data) {
+          if (data.config) {
+            if (data.config.lang) switchLanguage(data.config.lang, null, true);
+            if (typeof data.config.opacity === 'number') setOpacity(data.config.opacity, true);
+            if (typeof data.config.blur === 'number') setBlur(data.config.blur, true);
+            if (typeof data.config.refererEnabled === 'boolean') applyRefererUI(data.config.refererEnabled);
+            if (data.config.saveDir) document.getElementById('dirInput').value = data.config.saveDir;
+          }
+          updateModuleBadges(data.toolsReady, data.ffmpegVersion, data.ytdlpVersion, data.toolsFailed);
+          if (Array.isArray(data.logs)) {
+            data.logs.forEach((entry) => {
+              writeConsoleLog(entry.tag, entry.color, entry.message, entry.ts);
+            });
+          }
+        }
+      } catch (err) {
+        writeConsoleLog(t('tagErr'), '#f87171', 'Backend init error: ' + err);
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>

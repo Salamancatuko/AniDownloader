@@ -1,0 +1,19 @@
+# Compiled executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Release zip archives
+*.zip
+*.tar.gz
+
+# Test and temporary directories
+tmp/
+scratch/
+test/
+
+# OS specific files
+.DS_Store
+Thumbs.db
