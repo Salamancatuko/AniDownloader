@@ -44,6 +44,7 @@ type AppServer struct {
 	sseClients map[chan sseMessage]struct{}
 
 	BrowseFolderFn func() string
+	NativeEmitFn   func(event string, jsonPayload string)
 
 	listener net.Listener
 	server   *http.Server
@@ -89,6 +90,52 @@ func (s *AppServer) Shutdown() {
 		defer cancel()
 		_ = s.server.Shutdown(ctx)
 	}
+}
+
+func (s *AppServer) GetInitState() map[string]interface{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return map[string]interface{}{
+		"config":        s.config,
+		"toolsReady":    s.toolsReady,
+		"toolsFailed":   s.toolsFailed,
+		"ffmpegVersion": s.tools.FFmpegVersion,
+		"ytdlpVersion":  s.tools.YtDlpVersion,
+		"activeEngine":  s.activeEngine,
+		"logs":          append([]LogEntry(nil), s.logs...),
+	}
+}
+
+func (s *AppServer) UpdateConfig(incoming AppConfig) {
+	s.mu.Lock()
+	if incoming.Lang == "zh-TW" || incoming.Lang == "zh-CN" || incoming.Lang == "en" {
+		s.config.Lang = incoming.Lang
+	}
+	if incoming.Opacity >= 15 && incoming.Opacity <= 85 {
+		s.config.Opacity = incoming.Opacity
+	}
+	if incoming.Blur >= 0 && incoming.Blur <= 40 {
+		s.config.Blur = incoming.Blur
+	}
+	s.config.RefererEnabled = incoming.RefererEnabled
+	if incoming.SaveDir != "" {
+		s.config.SaveDir = incoming.SaveDir
+	}
+	cfgCopy := s.config
+	s.mu.Unlock()
+
+	SaveConfig(cfgCopy)
+}
+
+func (s *AppServer) SetSaveDir(dir string) {
+	if dir == "" {
+		return
+	}
+	s.mu.Lock()
+	s.config.SaveDir = dir
+	cfgCopy := s.config
+	s.mu.Unlock()
+	SaveConfig(cfgCopy)
 }
 
 func (s *AppServer) SetToolsReady(info ToolInfo) {
@@ -141,14 +188,20 @@ func (s *AppServer) Broadcast(event string, payload interface{}) {
 	if err != nil {
 		return
 	}
-	msg := sseMessage{Event: event, Data: string(b)}
+	dataStr := string(b)
 
+	// Push to native WebView2 bridge if attached
+	if s.NativeEmitFn != nil {
+		s.NativeEmitFn(event, dataStr)
+	}
+
+	// Push to browser SSE clients if any
+	msg := sseMessage{Event: event, Data: dataStr}
 	s.sseMu.Lock()
 	for ch := range s.sseClients {
 		select {
 		case ch <- msg:
 		default:
-			// Drop if client is slow so backend never blocks
 		}
 	}
 	s.sseMu.Unlock()
@@ -166,88 +219,6 @@ func (s *AppServer) StopActiveDownload() {
 	}
 }
 
-func (s *AppServer) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(embeddedIndexHTML)
-}
-
-func (s *AppServer) handleLogo(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	_, _ = w.Write(embeddedLogoSVG)
-}
-
-func (s *AppServer) handleInit(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	resp := map[string]interface{}{
-		"config":        s.config,
-		"toolsReady":    s.toolsReady,
-		"toolsFailed":   s.toolsFailed,
-		"ffmpegVersion": s.tools.FFmpegVersion,
-		"ytdlpVersion":  s.tools.YtDlpVersion,
-		"activeEngine":  s.activeEngine,
-		"logs":          append([]LogEntry(nil), s.logs...),
-	}
-	s.mu.Unlock()
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *AppServer) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var incoming AppConfig
-	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
-	}
-	s.mu.Lock()
-	if incoming.Lang == "zh-TW" || incoming.Lang == "zh-CN" || incoming.Lang == "en" {
-		s.config.Lang = incoming.Lang
-	}
-	if incoming.Opacity >= 15 && incoming.Opacity <= 85 {
-		s.config.Opacity = incoming.Opacity
-	}
-	if incoming.Blur >= 0 && incoming.Blur <= 40 {
-		s.config.Blur = incoming.Blur
-	}
-	s.config.RefererEnabled = incoming.RefererEnabled
-	if incoming.SaveDir != "" {
-		s.config.SaveDir = incoming.SaveDir
-	}
-	cfgCopy := s.config
-	s.mu.Unlock()
-
-	SaveConfig(cfgCopy)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
-}
-
-func (s *AppServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	selected := ""
-	if s.BrowseFolderFn != nil {
-		selected = s.BrowseFolderFn()
-	}
-	if selected != "" {
-		s.mu.Lock()
-		s.config.SaveDir = selected
-		cfgCopy := s.config
-		s.mu.Unlock()
-		SaveConfig(cfgCopy)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"path": selected})
-}
-
 type downloadRequest struct {
 	URL            string `json:"url"`
 	Title          string `json:"title"`
@@ -257,22 +228,11 @@ type downloadRequest struct {
 	Concurrency    int    `json:"concurrency"`
 }
 
-func (s *AppServer) handleDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req downloadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
-	}
-
+func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 	s.mu.Lock()
 	if !s.toolsReady {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"ok": false, "error": "內建工具尚未準備就緒，請稍候..."})
-		return
+		return fmt.Errorf("內建工具尚未準備就緒，請稍候...")
 	}
 	if s.activeCancel != nil {
 		s.activeCancel()
@@ -328,6 +288,70 @@ func (s *AppServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.Broadcast("done", map[string]interface{}{"engine": engine, "path": outPath})
 	}()
 
+	return nil
+}
+
+func (s *AppServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(embeddedIndexHTML)
+}
+
+func (s *AppServer) handleLogo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(embeddedLogoSVG)
+}
+
+func (s *AppServer) handleInit(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.GetInitState())
+}
+
+func (s *AppServer) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var incoming AppConfig
+	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	s.UpdateConfig(incoming)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (s *AppServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	selected := ""
+	if s.BrowseFolderFn != nil {
+		selected = s.BrowseFolderFn()
+	}
+	s.SetSaveDir(selected)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"path": selected})
+}
+
+func (s *AppServer) handleDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req downloadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := s.StartDownloadTask(req); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -362,7 +386,6 @@ func (s *AppServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 		s.sseMu.Unlock()
 	}()
 
-	// Send initial comment to flush headers immediately
 	_, _ = fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
 

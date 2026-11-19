@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -24,44 +25,44 @@ var (
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 
-	procGetModuleHandleW            = kernel32.NewProc("GetModuleHandleW")
-	procRegisterClassExW            = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW             = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW              = user32.NewProc("DefWindowProcW")
-	procDestroyWindow               = user32.NewProc("DestroyWindow")
-	procShowWindow                  = user32.NewProc("ShowWindow")
-	procUpdateWindow                = user32.NewProc("UpdateWindow")
-	procSetFocus                    = user32.NewProc("SetFocus")
-	procGetMessageW                 = user32.NewProc("GetMessageW")
-	procTranslateMessage            = user32.NewProc("TranslateMessage")
-	procDispatchMessageW            = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage             = user32.NewProc("PostQuitMessage")
-	procSendMessageW                = user32.NewProc("SendMessageW")
-	procPostMessageW                = user32.NewProc("PostMessageW")
-	procReleaseCapture              = user32.NewProc("ReleaseCapture")
-	procSetWindowPos                = user32.NewProc("SetWindowPos")
-	procSetWindowRgn                = user32.NewProc("SetWindowRgn")
-	procGetSystemMetrics            = user32.NewProc("GetSystemMetrics")
-	procLoadImageW                  = user32.NewProc("LoadImageW")
-	procLoadCursorW                 = user32.NewProc("LoadCursorW")
-	procSetProcessDPIAware          = user32.NewProc("SetProcessDPIAware")
-	procSetProcessDpiAwarenessCtx   = user32.NewProc("SetProcessDpiAwarenessContext")
-	procGetDpiForWindow             = user32.NewProc("GetDpiForWindow")
-	procGetDpiForSystem             = user32.NewProc("GetDpiForSystem")
-	procMessageBoxW                 = user32.NewProc("MessageBoxW")
+	procGetModuleHandleW          = kernel32.NewProc("GetModuleHandleW")
+	procRegisterClassExW          = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW           = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW            = user32.NewProc("DefWindowProcW")
+	procDestroyWindow             = user32.NewProc("DestroyWindow")
+	procShowWindow                = user32.NewProc("ShowWindow")
+	procUpdateWindow              = user32.NewProc("UpdateWindow")
+	procSetFocus                  = user32.NewProc("SetFocus")
+	procGetMessageW               = user32.NewProc("GetMessageW")
+	procTranslateMessage          = user32.NewProc("TranslateMessage")
+	procDispatchMessageW          = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage           = user32.NewProc("PostQuitMessage")
+	procSendMessageW              = user32.NewProc("SendMessageW")
+	procPostMessageW              = user32.NewProc("PostMessageW")
+	procReleaseCapture            = user32.NewProc("ReleaseCapture")
+	procSetWindowPos              = user32.NewProc("SetWindowPos")
+	procSetWindowRgn              = user32.NewProc("SetWindowRgn")
+	procGetSystemMetrics          = user32.NewProc("GetSystemMetrics")
+	procLoadImageW                = user32.NewProc("LoadImageW")
+	procLoadCursorW               = user32.NewProc("LoadCursorW")
+	procSetProcessDPIAware        = user32.NewProc("SetProcessDPIAware")
+	procSetProcessDpiAwarenessCtx = user32.NewProc("SetProcessDpiAwarenessContext")
+	procGetDpiForWindow           = user32.NewProc("GetDpiForWindow")
+	procGetDpiForSystem           = user32.NewProc("GetDpiForSystem")
+	procMessageBoxW               = user32.NewProc("MessageBoxW")
 
-	procCreateSolidBrush            = gdi32.NewProc("CreateSolidBrush")
-	procCreateRoundRectRgn          = gdi32.NewProc("CreateRoundRectRgn")
+	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
+	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 
-	procDwmSetWindowAttribute       = dwmapi.NewProc("DwmSetWindowAttribute")
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
 
-	procShellExecuteW               = shell32.NewProc("ShellExecuteW")
-	procSHBrowseForFolderW          = shell32.NewProc("SHBrowseForFolderW")
-	procSHGetPathFromIDListW        = shell32.NewProc("SHGetPathFromIDListW")
+	procShellExecuteW        = shell32.NewProc("ShellExecuteW")
+	procSHBrowseForFolderW   = shell32.NewProc("SHBrowseForFolderW")
+	procSHGetPathFromIDListW = shell32.NewProc("SHGetPathFromIDListW")
 
-	procCoInitializeEx              = ole32.NewProc("CoInitializeEx")
-	procCoTaskMemFree               = ole32.NewProc("CoTaskMemFree")
-	procCoUninitialize              = ole32.NewProc("CoUninitialize")
+	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
+	procCoTaskMemFree  = ole32.NewProc("CoTaskMemFree")
+	procCoUninitialize = ole32.NewProc("CoUninitialize")
 )
 
 const (
@@ -74,9 +75,9 @@ const (
 	WS_SYSMENU      = 0x00080000
 	WS_MINIMIZEBOX  = 0x00020000
 
-	SW_SHOW     = 5
-	SW_MINIMIZE = 6
 	SW_SHOWNORMAL = 1
+	SW_SHOW       = 5
+	SW_MINIMIZE   = 6
 
 	WM_DESTROY       = 0x0002
 	WM_MOVE          = 0x0003
@@ -91,6 +92,7 @@ const (
 	WM_APP_DRAG     = WM_USER + 10
 	WM_APP_MINIMIZE = WM_USER + 11
 	WM_APP_BROWSE   = WM_USER + 12
+	WM_APP_EVAL     = WM_USER + 13
 
 	HTCAPTION   = 2
 	WA_INACTIVE = 0
@@ -166,13 +168,24 @@ type DesktopApp struct {
 	chromium         *edge.Chromium
 	server           *AppServer
 	win11RoundActive bool
+	pageReady        bool
 	browseResCh      chan string
+
+	evalMu    sync.Mutex
+	evalQueue []string
 }
 
 var gDesktop *DesktopApp
 
 type webMsg struct {
-	Action string `json:"action"`
+	Action         string     `json:"action"`
+	Config         *AppConfig `json:"config,omitempty"`
+	URL            string     `json:"url,omitempty"`
+	Title          string     `json:"title,omitempty"`
+	SaveDir        string     `json:"saveDir,omitempty"`
+	Engine         string     `json:"engine,omitempty"`
+	RefererEnabled bool       `json:"refererEnabled,omitempty"`
+	Concurrency    int        `json:"concurrency,omitempty"`
 }
 
 func utf16Ptr(s string) *uint16 {
@@ -210,7 +223,6 @@ func getDPI(hwnd uintptr) int32 {
 }
 
 func loadAppIcon(hInstance uintptr) uintptr {
-	// akavel/rsrc assigns ID 2 when -manifest is also present, or ID 1 otherwise
 	for _, id := range []uintptr{2, 1} {
 		h, _, _ := procLoadImageW.Call(hInstance, id, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE|LR_SHARED)
 		if h != 0 {
@@ -222,7 +234,6 @@ func loadAppIcon(hInstance uintptr) uintptr {
 }
 
 func (a *DesktopApp) applyRoundedCorners(w, h, dpi int32) {
-	// Enable dark frame attributes where supported
 	dark := uint32(1)
 	if procDwmSetWindowAttribute.Find() == nil {
 		procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, uintptr(unsafe.Pointer(&dark)), 4)
@@ -235,7 +246,6 @@ func (a *DesktopApp) applyRoundedCorners(w, h, dpi int32) {
 		}
 	}
 
-	// Windows 10 fallback: crisp rounded region matching 16px logical radius
 	r := int32(logicalRadius * dpi / 96)
 	if r < 12 {
 		r = 12
@@ -244,6 +254,37 @@ func (a *DesktopApp) applyRoundedCorners(w, h, dpi int32) {
 	if rgn != 0 {
 		procSetWindowRgn.Call(a.hwnd, rgn, 1)
 	}
+}
+
+func (a *DesktopApp) EvalJS(js string) {
+	if a.hwnd == 0 || a.chromium == nil {
+		return
+	}
+	a.evalMu.Lock()
+	a.evalQueue = append(a.evalQueue, js)
+	a.evalMu.Unlock()
+	procPostMessageW.Call(a.hwnd, WM_APP_EVAL, 0, 0)
+}
+
+func (a *DesktopApp) EmitToWeb(event string, jsonPayload string) {
+	if !a.pageReady {
+		return
+	}
+	evBytes, _ := json.Marshal(event)
+	js := fmt.Sprintf("window.__nativeEmit && window.__nativeEmit(%s, %s);", string(evBytes), jsonPayload)
+	a.EvalJS(js)
+}
+
+func (a *DesktopApp) PushInitState() {
+	if a.server == nil {
+		return
+	}
+	state := a.server.GetInitState()
+	b, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	a.EmitToWeb("init", string(b))
 }
 
 func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
@@ -261,9 +302,26 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 		case WM_APP_BROWSE:
 			selected := showFolderDialog(hwnd)
+			if selected != "" && app.server != nil {
+				app.server.SetSaveDir(selected)
+				b, _ := json.Marshal(map[string]string{"path": selected})
+				app.EmitToWeb("browse_result", string(b))
+			}
 			select {
 			case app.browseResCh <- selected:
 			default:
+			}
+			return 0
+
+		case WM_APP_EVAL:
+			app.evalMu.Lock()
+			q := app.evalQueue
+			app.evalQueue = nil
+			app.evalMu.Unlock()
+			if app.chromium != nil {
+				for _, js := range q {
+					app.chromium.Eval(js)
+				}
 			}
 			return 0
 
@@ -348,7 +406,6 @@ func showFolderDialog(owner uintptr) string {
 
 func (a *DesktopApp) BrowseFolder() string {
 	if a.hwnd != 0 {
-		// Drain stale result if any
 		select {
 		case <-a.browseResCh:
 		default:
@@ -361,8 +418,59 @@ func (a *DesktopApp) BrowseFolder() string {
 	return showFolderDialog(0)
 }
 
+func (a *DesktopApp) handleWebMessage(raw string) {
+	var m webMsg
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return
+	}
+	switch m.Action {
+	case "drag":
+		procPostMessageW.Call(a.hwnd, WM_APP_DRAG, 0, 0)
+	case "minimize":
+		procPostMessageW.Call(a.hwnd, WM_APP_MINIMIZE, 0, 0)
+	case "close":
+		procPostMessageW.Call(a.hwnd, WM_CLOSE, 0, 0)
+	case "init":
+		a.pageReady = true
+		a.PushInitState()
+	case "save_config":
+		if m.Config != nil && a.server != nil {
+			a.server.UpdateConfig(*m.Config)
+		}
+	case "browse":
+		procPostMessageW.Call(a.hwnd, WM_APP_BROWSE, 0, 0)
+	case "download":
+		if a.server != nil {
+			err := a.server.StartDownloadTask(downloadRequest{
+				URL:            m.URL,
+				Title:          m.Title,
+				SaveDir:        m.SaveDir,
+				Engine:         m.Engine,
+				RefererEnabled: m.RefererEnabled,
+				Concurrency:    DefaultConcurrency,
+			})
+			if err != nil {
+				b, _ := json.Marshal(map[string]string{"message": err.Error()})
+				a.EmitToWeb("error_event", string(b))
+			}
+		}
+	case "stop":
+		if a.server != nil {
+			a.server.StopActiveDownload()
+		}
+	}
+}
+
 func RunDesktopWindow(srv *AppServer) error {
 	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	// Initialize STA COM on the locked UI thread (required by WebView2)
+	hr, _, _ := procCoInitializeEx.Call(0, 2) // COINIT_APARTMENTTHREADED
+	if hr == 0 || hr == 1 {
+		defer procCoUninitialize.Call()
+	}
+
 	enableDPIAwareness()
 
 	app := &DesktopApp{
@@ -371,6 +479,7 @@ func RunDesktopWindow(srv *AppServer) error {
 	}
 	gDesktop = app
 	srv.BrowseFolderFn = app.BrowseFolder
+	srv.NativeEmitFn = app.EmitToWeb
 
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	hIcon := loadAppIcon(hInstance)
@@ -422,7 +531,6 @@ func RunDesktopWindow(srv *AppServer) error {
 	}
 	app.hwnd = hwnd
 
-	// Refine DPI with actual window handle
 	actualDPI := getDPI(hwnd)
 	if actualDPI != dpi {
 		dpi = actualDPI
@@ -434,7 +542,12 @@ func RunDesktopWindow(srv *AppServer) error {
 	}
 	app.applyRoundedCorners(physW, physH, dpi)
 
-	// Prepare WebView2 data directory under %LOCALAPPDATA%\AniDownloader\WebView2
+	// IMPORTANT: Show and update the native window BEFORE embedding WebView2
+	// so the WebView2 controller initializes with valid visible client bounds.
+	procShowWindow.Call(hwnd, SW_SHOW)
+	procUpdateWindow.Call(hwnd)
+	procSetFocus.Call(hwnd)
+
 	dataDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "AniDownloader", "WebView2")
 	if os.Getenv("LOCALAPPDATA") == "" {
 		dataDir = filepath.Join(os.TempDir(), "AniDownloader", "WebView2")
@@ -444,32 +557,24 @@ func RunDesktopWindow(srv *AppServer) error {
 	chromium := edge.NewChromium()
 	chromium.DataPath = dataDir
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
-	chromium.MessageCallback = func(raw string) {
-		var m webMsg
-		if err := json.Unmarshal([]byte(raw), &m); err != nil {
-			return
-		}
-		switch m.Action {
-		case "drag":
-			procPostMessageW.Call(hwnd, WM_APP_DRAG, 0, 0)
-		case "minimize":
-			procPostMessageW.Call(hwnd, WM_APP_MINIMIZE, 0, 0)
-		case "close":
-			procPostMessageW.Call(hwnd, WM_CLOSE, 0, 0)
-		}
+	chromium.MessageCallback = app.handleWebMessage
+	chromium.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
+		chromium.Resize()
+		_ = chromium.Show()
+		app.pageReady = true
+		app.PushInitState()
 	}
 
 	app.chromium = chromium
 
 	if !chromium.Embed(hwnd) {
-		// Graceful fallback if WebView2 Runtime is unavailable on the host system
 		procDestroyWindow.Call(hwnd)
 		app.hwnd = 0
+		srv.NativeEmitFn = nil
 		launchBrowserFallback(srv.BaseURL)
 		return nil
 	}
 
-	// Set dark #060911 default WebView2 background to prevent any white flash
 	if ctrl := chromium.GetController(); ctrl != nil {
 		if ctrl2 := ctrl.GetICoreWebView2Controller2(); ctrl2 != nil {
 			_ = ctrl2.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 6, G: 9, B: 17})
@@ -486,11 +591,9 @@ func RunDesktopWindow(srv *AppServer) error {
 	}
 
 	chromium.Resize()
-	chromium.Navigate(srv.BaseURL)
-
-	procShowWindow.Call(hwnd, SW_SHOW)
-	procUpdateWindow.Call(hwnd)
-	procSetFocus.Call(hwnd)
+	_ = chromium.Show()
+	// Load HTML directly from memory (immune to system proxy / VPN / firewall loopback issues)
+	chromium.NavigateToString(string(embeddedIndexHTML))
 	chromium.Focus()
 
 	var msg MSG
@@ -506,7 +609,6 @@ func RunDesktopWindow(srv *AppServer) error {
 }
 
 func launchBrowserFallback(url string) {
-	// Try Microsoft Edge or Chrome in standalone --app window mode
 	candidates := []string{
 		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
 		filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
@@ -522,7 +624,6 @@ func launchBrowserFallback(url string) {
 			}
 		}
 	}
-	// Ultimate fallback: default browser
 	procShellExecuteW.Call(0, uintptr(unsafe.Pointer(utf16Ptr("open"))), uintptr(unsafe.Pointer(utf16Ptr(url))), 0, 0, SW_SHOWNORMAL)
 	select {}
 }
