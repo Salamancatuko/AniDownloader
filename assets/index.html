@@ -1727,7 +1727,10 @@
             <div class="liquid-surface console-panel liquid-trackable">
               <div class="console-header">
                 <span class="field-label-bright" id="lblConsoleHeader">核心執行日誌 (STDOUT / STDERR)</span>
-                <button class="mini-inline-btn" type="button" id="btnClearConsole" onclick="clearConsoleLogs()">清空日誌</button>
+                <div class="inline-btn-group">
+                  <button class="mini-inline-btn" type="button" id="btnExportConsole" onclick="exportConsoleLogs()">導出日誌</button>
+                  <button class="mini-inline-btn" type="button" id="btnClearConsole" onclick="clearConsoleLogs()">清空日誌</button>
+                </div>
               </div>
               <div class="console-box" id="consoleOutput"></div>
             </div>
@@ -1806,6 +1809,7 @@
         badgeAntiLeechOff: '防盜鏈：已關閉',
         toastFingerprintReset: '已恢復為 yt-dlp 預設 UA / JA3 / Akamai 指紋',
         lblConsoleHeader: '核心執行日誌 (STDOUT / STDERR)',
+        btnExportConsole: '導出日誌',
         btnClearConsole: '清空日誌',
         lblTrayRestore: '動畫瘋 m3u8 影片下載器 · 點擊還原視窗',
         tagSys: '[提示]',
@@ -1822,6 +1826,9 @@
         toastError: '下載失敗，請切換至 Console 查看詳細日誌',
         toastDir: '已切換儲存目錄',
         toastConsoleCleared: '已清空執行日誌',
+        toastExportEmpty: '目前沒有可導出的日誌內容',
+        toastExportSuccess: '日誌已導出至',
+        toastExportFail: '日誌導出失敗',
         logSample: '已載入測試範例網址與影片標題。',
         logRefererOn: '防盜鏈標頭狀態已切換為：開啟 (附帶 Origin / Referer)',
         logRefererOff: '防盜鏈標頭狀態已切換為：關閉 (直接連線)'
@@ -1853,6 +1860,7 @@
         badgeAntiLeechOff: '防盗链：已关闭',
         toastFingerprintReset: '已恢复为 yt-dlp 默认 UA / JA3 / Akamai 指纹',
         lblConsoleHeader: '核心执行日志 (STDOUT / STDERR)',
+        btnExportConsole: '导出日志',
         btnClearConsole: '清空日志',
         lblTrayRestore: '动画疯 m3u8 影片下载器 · 点击还原窗口',
         tagSys: '[提示]',
@@ -1869,6 +1877,9 @@
         toastError: '下载失败，请切换至 Console 查看详细日志',
         toastDir: '已切换储存目录',
         toastConsoleCleared: '已清空执行日志',
+        toastExportEmpty: '当前没有可导出的日志内容',
+        toastExportSuccess: '日志已导出至',
+        toastExportFail: '日志导出失败',
         logSample: '已载入测试范例网址与影片标题。',
         logRefererOn: '防盗链标头状态已切换为：开启 (附带 Origin / Referer)',
         logRefererOff: '防盗链标头状态已切换为：关闭 (直接连接)'
@@ -1900,6 +1911,7 @@
         badgeAntiLeechOff: 'Anti-Leech: OFF',
         toastFingerprintReset: 'Reset UA / JA3 / Akamai to yt-dlp defaults',
         lblConsoleHeader: 'Core Execution Log (STDOUT / STDERR)',
+        btnExportConsole: 'Export Log',
         btnClearConsole: 'Clear Log',
         lblTrayRestore: 'Anime m3u8 Downloader · Click to Restore',
         tagSys: '[INFO]',
@@ -1916,6 +1928,9 @@
         toastError: 'Download failed, check Console tab for details',
         toastDir: 'Updated save directory',
         toastConsoleCleared: 'Console log cleared',
+        toastExportEmpty: 'No console logs to export',
+        toastExportSuccess: 'Logs exported to',
+        toastExportFail: 'Failed to export logs',
         logSample: 'Loaded sample stream URL and video title.',
         logRefererOn: 'Anti-leech header toggled: ON (Origin / Referer attached)',
         logRefererOff: 'Anti-leech header toggled: OFF (Direct connection)'
@@ -2010,6 +2025,7 @@
       document.getElementById('lblSetAkamai').textContent = t('lblSetAkamai');
       document.getElementById('btnResetFingerprint').textContent = t('btnResetFingerprint');
       document.getElementById('lblConsoleHeader').textContent = t('lblConsoleHeader');
+      document.getElementById('btnExportConsole').textContent = t('btnExportConsole');
       document.getElementById('btnClearConsole').textContent = t('btnClearConsole');
       document.getElementById('lblTrayRestore').textContent = t('lblTrayRestore');
 
@@ -2290,6 +2306,14 @@
           }
           break;
 
+        case 'export_result':
+          if (d.ok && d.path) {
+            showToast(`${t('toastExportSuccess')}: ${d.path}`);
+          } else if (d.error) {
+            showToast(`${t('toastExportFail')}: ${d.error}`);
+          }
+          break;
+
         case 'log':
           writeConsoleLog(d.tag || t('tagSys'), d.color || '#38bdf8', d.message || '', d.ts);
           break;
@@ -2389,6 +2413,40 @@
         box.removeChild(box.firstElementChild);
       }
       box.scrollTop = box.scrollHeight;
+    }
+
+    function exportConsoleLogs() {
+      const lines = Array.from(document.querySelectorAll('#consoleOutput .console-line')).map(
+        (el) => el.textContent || ''
+      );
+      if (!lines.length) {
+        showToast(t('toastExportEmpty'));
+        return;
+      }
+      const content = lines.join('\r\n') + '\r\n';
+      if (IS_DESKTOP) {
+        sendNative('export_logs', { content });
+        return;
+      }
+      const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const now = new Date();
+      const stamp =
+        now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0') +
+        '_' +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0') +
+        String(now.getSeconds()).padStart(2, '0');
+      a.href = url;
+      a.download = `AniDownloader_Log_${stamp}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`${t('toastExportSuccess')}: ${a.download}`);
     }
 
     function clearConsoleLogs() {

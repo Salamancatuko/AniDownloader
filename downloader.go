@@ -128,6 +128,11 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 		}
 	}
 
+	baseEnv := append(os.Environ(),
+		"PYTHONUTF8=1",
+		"PYTHONIOENCODING=utf-8:replace",
+	)
+
 	if opt.Engine == "ffmpeg" {
 		args := make([]string, 0, 16)
 		if opt.RefererEnabled {
@@ -142,11 +147,12 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 			outFilePath,
 		)
 		cmd = exec.Command(opt.FFmpegPath, args...)
+		cmd.Env = baseEnv
 	} else {
 		outTemplate := filepath.Join(opt.OutputDir, opt.Title+".%(ext)s")
 		ffmpegDir := filepath.Dir(opt.FFmpegPath)
 
-		args := make([]string, 0, 28)
+		args := make([]string, 0, 30)
 		if opt.RefererEnabled {
 			args = append(args,
 				"--add-header", fmt.Sprintf("Origin: %s", AnimeOrigin),
@@ -158,6 +164,7 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 			}
 		}
 		args = append(args,
+			"--encoding", "utf-8",
 			"--ffmpeg-location", ffmpegDir,
 			"-N", strconv.Itoa(opt.Concurrency),
 			"--concurrent-fragments", strconv.Itoa(opt.Concurrency),
@@ -169,16 +176,16 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 			opt.M3U8Url,
 		)
 		cmd = exec.Command(opt.YtDlpPath, args...)
+		env := baseEnv
 		if opt.RefererEnabled {
-			env := os.Environ()
 			if ja3 != "" {
 				env = append(env, "YT_DLP_JA3="+ja3)
 			}
 			if akamai != "" {
 				env = append(env, "YT_DLP_AKAMAI="+akamai)
 			}
-			cmd.Env = env
 		}
+		cmd.Env = env
 	}
 
 	// Hide console window on Windows
@@ -366,7 +373,7 @@ func scanLinesAndReturns(r io.Reader, handleLine func(string)) {
 				b := buf[i]
 				if b == '\r' || b == '\n' {
 					if lineBuf.Len() > 0 {
-						handleLine(lineBuf.String())
+						handleLine(decodeConsoleBytes(lineBuf.Bytes()))
 						lineBuf.Reset()
 					}
 				} else {
@@ -379,7 +386,7 @@ func scanLinesAndReturns(r io.Reader, handleLine func(string)) {
 		}
 	}
 	if lineBuf.Len() > 0 {
-		handleLine(lineBuf.String())
+		handleLine(decodeConsoleBytes(lineBuf.Bytes()))
 	}
 }
 

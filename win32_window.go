@@ -12,6 +12,9 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/jchv/go-webview2/pkg/edge"
@@ -24,8 +27,10 @@ var (
 	dwmapi   = syscall.NewLazyDLL("dwmapi.dll")
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
+	comdlg32 = syscall.NewLazyDLL("comdlg32.dll")
 
 	procGetModuleHandleW            = kernel32.NewProc("GetModuleHandleW")
+	procMultiByteToWideChar         = kernel32.NewProc("MultiByteToWideChar")
 	procRegisterClassExW            = user32.NewProc("RegisterClassExW")
 	procCreateWindowExW             = user32.NewProc("CreateWindowExW")
 	procDefWindowProcW              = user32.NewProc("DefWindowProcW")
@@ -65,6 +70,8 @@ var (
 	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
 	procCoTaskMemFree  = ole32.NewProc("CoTaskMemFree")
 	procCoUninitialize = ole32.NewProc("CoUninitialize")
+
+	procGetSaveFileNameW = comdlg32.NewProc("GetSaveFileNameW")
 )
 
 const (
@@ -97,6 +104,12 @@ const (
 	WM_APP_BROWSE   = WM_USER + 12
 	WM_APP_EVAL     = WM_USER + 13
 	WM_APP_BLUR     = WM_USER + 14
+	WM_APP_EXPORT   = WM_USER + 15
+
+	OFN_OVERWRITEPROMPT = 0x00000002
+	OFN_NOCHANGEDIR     = 0x00000008
+	OFN_PATHMUSTEXIST   = 0x00000800
+	OFN_EXPLORER        = 0x00080000
 
 	HTCAPTION   = 2
 	WA_INACTIVE = 0
@@ -199,6 +212,32 @@ type BROWSEINFO struct {
 	_              uint32
 }
 
+type OPENFILENAMEW struct {
+	LStructSize       uint32
+	HwndOwner         uintptr
+	HInstance         uintptr
+	LpstrFilter       *uint16
+	LpstrCustomFilter *uint16
+	NMaxCustFilter    uint32
+	NFilterIndex      uint32
+	LpstrFile         *uint16
+	NMaxFile          uint32
+	LpstrFileTitle    *uint16
+	NMaxFileTitle     uint32
+	LpstrInitialDir   *uint16
+	LpstrTitle        *uint16
+	Flags             uint32
+	NFileOffset       uint16
+	NFileExtension    uint16
+	LpstrDefExt       *uint16
+	LCustData         uintptr
+	LpfnHook          uintptr
+	LpTemplateName    *uint16
+	PvReserved        uintptr
+	DwReserved        uint32
+	FlagsEx           uint32
+}
+
 type DesktopApp struct {
 	hwnd             uintptr
 	chromium         *edge.Chromium
@@ -210,6 +249,9 @@ type DesktopApp struct {
 
 	evalMu    sync.Mutex
 	evalQueue []string
+
+	exportMu      sync.Mutex
+	exportContent string
 }
 
 var gDesktop *DesktopApp
@@ -227,11 +269,49 @@ type webMsg struct {
 	JA3            string     `json:"ja3,omitempty"`
 	Akamai         string     `json:"akamai,omitempty"`
 	Concurrency    int        `json:"concurrency,omitempty"`
+	Content        string     `json:"content,omitempty"`
 }
 
 func utf16Ptr(s string) *uint16 {
 	p, _ := syscall.UTF16PtrFromString(s)
 	return p
+}
+
+// decodeConsoleBytes ensures subprocess output from yt-dlp / ffmpeg on Windows
+// (which may be UTF-8 or system ANSI code page such as GBK/CP936 or Big5/CP950)
+// is always decoded cleanly to valid UTF-8 without garbled characters.
+func decodeConsoleBytes(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	if procMultiByteToWideChar.Find() == nil {
+		n, _, _ := procMultiByteToWideChar.Call(
+			0, // CP_ACP (current Windows ANSI code page)
+			0,
+			uintptr(unsafe.Pointer(&b[0])),
+			uintptr(len(b)),
+			0,
+			0,
+		)
+		if n > 0 {
+			wbuf := make([]uint16, n)
+			n2, _, _ := procMultiByteToWideChar.Call(
+				0,
+				0,
+				uintptr(unsafe.Pointer(&b[0])),
+				uintptr(len(b)),
+				uintptr(unsafe.Pointer(&wbuf[0])),
+				n,
+			)
+			if n2 > 0 {
+				return syscall.UTF16ToString(wbuf[:n2])
+			}
+		}
+	}
+	return string(b)
 }
 
 func enableDPIAwareness() {
@@ -392,6 +472,33 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 			}
 			return 0
 
+		case WM_APP_EXPORT:
+			app.exportMu.Lock()
+			content := app.exportContent
+			app.exportContent = ""
+			app.exportMu.Unlock()
+
+			initialDir := ""
+			if app.server != nil {
+				app.server.mu.Lock()
+				initialDir = app.server.config.SaveDir
+				app.server.mu.Unlock()
+			}
+
+			targetPath := showSaveLogDialog(hwnd, initialDir)
+			if targetPath != "" {
+				// Write UTF-8 with BOM so Windows Notepad & editors display Chinese without garbling
+				data := append([]byte{0xEF, 0xBB, 0xBF}, []byte(content)...)
+				if err := os.WriteFile(targetPath, data, 0644); err != nil {
+					b, _ := json.Marshal(map[string]any{"ok": false, "error": err.Error()})
+					app.EmitToWeb("export_result", string(b))
+				} else {
+					b, _ := json.Marshal(map[string]any{"ok": true, "path": targetPath})
+					app.EmitToWeb("export_result", string(b))
+				}
+			}
+			return 0
+
 		case WM_APP_EVAL:
 			app.evalMu.Lock()
 			q := app.evalQueue
@@ -487,6 +594,46 @@ func showFolderDialog(owner uintptr) string {
 	return syscall.UTF16ToString(pathBuf[:])
 }
 
+func showSaveLogDialog(owner uintptr, initialDir string) string {
+	if procGetSaveFileNameW.Find() != nil {
+		return ""
+	}
+
+	var fileBuf [1024]uint16
+	defaultName := fmt.Sprintf("AniDownloader_Log_%s.txt", time.Now().Format("20060102_150405"))
+	nameUTF16 := utf16.Encode([]rune(defaultName))
+	copy(fileBuf[:], nameUTF16)
+
+	filterUTF16 := utf16.Encode([]rune("日誌檔案 (*.txt;*.log)\x00*.txt;*.log\x00所有檔案 (*.*)\x00*.*\x00\x00"))
+	titlePtr := utf16Ptr("導出執行日誌")
+	defExtPtr := utf16Ptr("txt")
+
+	var initDirPtr *uint16
+	if initialDir != "" {
+		if st, err := os.Stat(initialDir); err == nil && st.IsDir() {
+			initDirPtr = utf16Ptr(initialDir)
+		}
+	}
+
+	var ofn OPENFILENAMEW
+	ofn.LStructSize = uint32(unsafe.Sizeof(ofn))
+	ofn.HwndOwner = owner
+	ofn.LpstrFilter = &filterUTF16[0]
+	ofn.NFilterIndex = 1
+	ofn.LpstrFile = &fileBuf[0]
+	ofn.NMaxFile = uint32(len(fileBuf))
+	ofn.LpstrInitialDir = initDirPtr
+	ofn.LpstrTitle = titlePtr
+	ofn.LpstrDefExt = defExtPtr
+	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER
+
+	ok, _, _ := procGetSaveFileNameW.Call(uintptr(unsafe.Pointer(&ofn)))
+	if ok == 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(fileBuf[:])
+}
+
 func (a *DesktopApp) BrowseFolder() string {
 	if a.hwnd != 0 {
 		select {
@@ -524,6 +671,11 @@ func (a *DesktopApp) handleWebMessage(raw string) {
 		}
 	case "browse":
 		procPostMessageW.Call(a.hwnd, WM_APP_BROWSE, 0, 0)
+	case "export_logs":
+		a.exportMu.Lock()
+		a.exportContent = m.Content
+		a.exportMu.Unlock()
+		procPostMessageW.Call(a.hwnd, WM_APP_EXPORT, 0, 0)
 	case "download":
 		if a.server != nil {
 			err := a.server.StartDownloadTask(downloadRequest{
