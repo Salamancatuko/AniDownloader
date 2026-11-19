@@ -10,7 +10,7 @@
        ========================================================================== */
     :root {
       --glass-alpha: 0.48;
-      --glass-blur: 22px;
+      --glass-blur: 0px;
       --accent: #0095ff;
       --accent-cyan: #38bdf8;
       --yt-color: #00B4DF;
@@ -1191,12 +1191,69 @@
       font-weight: 600;
     }
 
-    .settings-slider-wrap {
+    .settings-box.settings-fp-box {
+      padding: 13px 16px;
+      gap: 10px;
+    }
+
+    .settings-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-link-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.42);
+      background: rgba(0, 149, 255, 0.16);
+      color: var(--accent-cyan);
+      transition: all 0.16s ease;
+    }
+
+    .settings-link-badge.is-off {
+      border-color: rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+    }
+
+    .settings-fp-fields {
       position: relative;
       z-index: 2;
       display: flex;
-      align-items: center;
-      height: 20px;
+      flex-direction: column;
+      gap: 9px;
+      transition: opacity 0.18s ease;
+    }
+
+    .settings-fp-box.is-linked-off .settings-fp-fields {
+      opacity: 0.56;
+    }
+
+    .settings-fp-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .settings-fp-label {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      letter-spacing: 0.2px;
+    }
+
+    .settings-input-shell {
+      height: 33px;
+      padding: 0 11px;
+      border-radius: 8px;
+    }
+
+    .settings-input-shell .glass-input {
+      font-size: 11.5px;
+      font-family: Consolas, "Cascadia Code", "Microsoft JhengHei", monospace;
     }
 
     /* ==========================================================================
@@ -1607,24 +1664,58 @@
               </div>
             </div>
 
-            <!-- Card 2: Frosted Blur Radius -->
-            <div class="liquid-surface settings-box liquid-trackable">
+            <!-- Card 2: Custom UA / JA3 / Akamai Fingerprint (Linked to Anti-Leech Header) -->
+            <div class="liquid-surface settings-box settings-fp-box liquid-trackable" id="settingsFpBox">
               <div class="settings-box-header">
-                <span class="field-label-bright" id="lblSetBlur">磨砂模糊度</span>
-                <span class="settings-val" id="setBlurVal">22px</span>
+                <span class="field-label-bright" id="lblSetFingerprint">防盜鏈指紋與 UA 設定</span>
+                <div class="settings-header-actions">
+                  <span class="settings-link-badge" id="setAntiLeechBadge">防盜鏈：已啟用</span>
+                  <button class="mini-inline-btn" type="button" id="btnResetFingerprint" onclick="resetFingerprintDefaults()">恢復預設</button>
+                </div>
               </div>
-              <div class="settings-slider-wrap">
-                <input
-                  type="range"
-                  id="setBlurSlider"
-                  class="liquid-slider"
-                  style="width: 100%;"
-                  min="0"
-                  max="40"
-                  value="22"
-                  aria-label="磨砂模糊度"
-                  oninput="setBlur(this.value)"
-                />
+              <div class="settings-fp-fields">
+                <div class="settings-fp-row">
+                  <label class="settings-fp-label" for="uaInput" id="lblSetUA">UA 頭自定義 (User-Agent)</label>
+                  <div class="input-shell settings-input-shell">
+                    <input
+                      type="text"
+                      id="uaInput"
+                      class="glass-input"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="Mozilla/5.0 ..."
+                      oninput="scheduleSaveConfig()"
+                    />
+                  </div>
+                </div>
+                <div class="settings-fp-row">
+                  <label class="settings-fp-label" for="ja3Input" id="lblSetJA3">JA3 指紋自定義 (TLS Fingerprint)</label>
+                  <div class="input-shell settings-input-shell">
+                    <input
+                      type="text"
+                      id="ja3Input"
+                      class="glass-input"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="771,4865-4866-..."
+                      oninput="scheduleSaveConfig()"
+                    />
+                  </div>
+                </div>
+                <div class="settings-fp-row">
+                  <label class="settings-fp-label" for="akamaiInput" id="lblSetAkamai">Akamai 指紋自定義 (HTTP/2 Fingerprint)</label>
+                  <div class="input-shell settings-input-shell">
+                    <input
+                      type="text"
+                      id="akamaiInput"
+                      class="glass-input"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="1:65536;2:0;4:6291456;..."
+                      oninput="scheduleSaveConfig()"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -1665,10 +1756,14 @@
       if (bg) bg.remove();
     }
 
+    const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    const DEFAULT_JA3 = '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0';
+    const DEFAULT_AKAMAI = '1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p';
+
     let currentTab = 'downloader';
     let currentLang = 'zh-TW';
     let currentOpacity = 48;
-    let currentBlur = 22;
+    let currentBlur = 0;
     let refererEnabled = true;
     let activeEngine = null;
     let toolsReady = false;
@@ -1700,7 +1795,14 @@
         subMerging: '正在封裝合併 MP4...',
         subPreparing: '正在連線並解析串流...',
         lblSetLang: '介面語言 / Language',
-        lblSetBlur: '磨砂模糊度',
+        lblSetFingerprint: '防盜鏈指紋與 UA 設定',
+        lblSetUA: 'UA 頭自定義 (User-Agent)',
+        lblSetJA3: 'JA3 指紋自定義 (TLS Fingerprint)',
+        lblSetAkamai: 'Akamai 指紋自定義 (HTTP/2 Fingerprint)',
+        btnResetFingerprint: '恢復預設',
+        badgeAntiLeechOn: '防盜鏈：已啟用',
+        badgeAntiLeechOff: '防盜鏈：已關閉',
+        toastFingerprintReset: '已恢復為 yt-dlp 預設 UA / JA3 / Akamai 指紋',
         lblConsoleHeader: '核心執行日誌 (STDOUT / STDERR)',
         btnClearConsole: '清空日誌',
         lblTrayRestore: '動畫瘋 m3u8 影片下載器 · 點擊還原視窗',
@@ -1740,7 +1842,14 @@
         subMerging: '正在封装合并 MP4...',
         subPreparing: '正在连接并解析串流...',
         lblSetLang: '界面语言 / Language',
-        lblSetBlur: '磨砂模糊度',
+        lblSetFingerprint: '防盗链指纹与 UA 设置',
+        lblSetUA: 'UA 头自定义 (User-Agent)',
+        lblSetJA3: 'JA3 指纹自定义 (TLS Fingerprint)',
+        lblSetAkamai: 'Akamai 指纹自定义 (HTTP/2 Fingerprint)',
+        btnResetFingerprint: '恢复默认',
+        badgeAntiLeechOn: '防盗链：已启用',
+        badgeAntiLeechOff: '防盗链：已关闭',
+        toastFingerprintReset: '已恢复为 yt-dlp 默认 UA / JA3 / Akamai 指纹',
         lblConsoleHeader: '核心执行日志 (STDOUT / STDERR)',
         btnClearConsole: '清空日志',
         lblTrayRestore: '动画疯 m3u8 影片下载器 · 点击还原窗口',
@@ -1780,7 +1889,14 @@
         subMerging: 'Merging into MP4...',
         subPreparing: 'Connecting & parsing playlist...',
         lblSetLang: 'Interface Language / 語言',
-        lblSetBlur: 'Frosted Blur Radius',
+        lblSetFingerprint: 'Anti-Leech Fingerprint & UA',
+        lblSetUA: 'Custom User-Agent (UA Header)',
+        lblSetJA3: 'Custom JA3 Fingerprint (TLS)',
+        lblSetAkamai: 'Custom Akamai Fingerprint (HTTP/2)',
+        btnResetFingerprint: 'Reset Defaults',
+        badgeAntiLeechOn: 'Anti-Leech: ON',
+        badgeAntiLeechOff: 'Anti-Leech: OFF',
+        toastFingerprintReset: 'Reset UA / JA3 / Akamai to yt-dlp defaults',
         lblConsoleHeader: 'Core Execution Log (STDOUT / STDERR)',
         btnClearConsole: 'Clear Log',
         lblTrayRestore: 'Anime m3u8 Downloader · Click to Restore',
@@ -1820,9 +1936,12 @@
         const cfg = {
           lang: currentLang,
           opacity: currentOpacity,
-          blur: currentBlur,
+          blur: 0,
           refererEnabled: refererEnabled,
-          saveDir: document.getElementById('dirInput').value.trim()
+          saveDir: document.getElementById('dirInput').value.trim(),
+          userAgent: document.getElementById('uaInput').value.trim(),
+          ja3: document.getElementById('ja3Input').value.trim(),
+          akamai: document.getElementById('akamaiInput').value.trim()
         };
         if (IS_DESKTOP) {
           sendNative('save_config', { config: cfg });
@@ -1883,11 +2002,16 @@
       document.getElementById('titleYtdlp').textContent = t('titleYtdlp');
       document.getElementById('titleFfmpeg').textContent = t('titleFfmpeg');
       document.getElementById('lblSetLang').textContent = t('lblSetLang');
-      document.getElementById('lblSetBlur').textContent = t('lblSetBlur');
+      document.getElementById('lblSetFingerprint').textContent = t('lblSetFingerprint');
+      document.getElementById('lblSetUA').textContent = t('lblSetUA');
+      document.getElementById('lblSetJA3').textContent = t('lblSetJA3');
+      document.getElementById('lblSetAkamai').textContent = t('lblSetAkamai');
+      document.getElementById('btnResetFingerprint').textContent = t('btnResetFingerprint');
       document.getElementById('lblConsoleHeader').textContent = t('lblConsoleHeader');
       document.getElementById('btnClearConsole').textContent = t('btnClearConsole');
       document.getElementById('lblTrayRestore').textContent = t('lblTrayRestore');
 
+      syncFingerprintLinkUI();
       syncEngineSubtitles();
       if (!skipSave) scheduleSaveConfig();
     }
@@ -1902,14 +2026,33 @@
       }
     }
 
+    function syncFingerprintLinkUI() {
+      const box = document.getElementById('settingsFpBox');
+      const badge = document.getElementById('setAntiLeechBadge');
+      if (box) box.classList.toggle('is-linked-off', !refererEnabled);
+      if (badge) {
+        badge.classList.toggle('is-off', !refererEnabled);
+        badge.textContent = refererEnabled ? t('badgeAntiLeechOn') : t('badgeAntiLeechOff');
+      }
+    }
+
+    function resetFingerprintDefaults() {
+      document.getElementById('uaInput').value = DEFAULT_UA;
+      document.getElementById('ja3Input').value = DEFAULT_JA3;
+      document.getElementById('akamaiInput').value = DEFAULT_AKAMAI;
+      scheduleSaveConfig();
+      showToast(t('toastFingerprintReset'));
+    }
+
     /* ==========================================================================
-       Anti-Leech Switch & Glass Sliders (Opacity + Blur)
+       Anti-Leech Switch & Glass Opacity Slider
        ========================================================================== */
     function applyRefererUI(enabled) {
       refererEnabled = Boolean(enabled);
       const sw = document.getElementById('refererSwitch');
       sw.classList.toggle('on', refererEnabled);
       sw.setAttribute('aria-checked', String(refererEnabled));
+      syncFingerprintLinkUI();
       syncEngineSubtitles();
     }
 
@@ -1936,18 +2079,6 @@
       slider.value = clamped;
       updateSliderFill(slider);
       document.getElementById('topOpacityVal').textContent = `${clamped}%`;
-      if (!skipSave) scheduleSaveConfig();
-    }
-
-    function setBlur(val, skipSave) {
-      const clamped = Math.max(0, Math.min(40, Number(val)));
-      currentBlur = clamped;
-      document.documentElement.style.setProperty('--glass-blur', `${clamped}px`);
-      const slider = document.getElementById('setBlurSlider');
-      slider.value = clamped;
-      updateSliderFill(slider);
-      document.getElementById('setBlurVal').textContent = `${clamped}px`;
-      if (IS_DESKTOP) sendNative('set_blur', { blur: clamped });
       if (!skipSave) scheduleSaveConfig();
     }
 
@@ -2024,6 +2155,9 @@
         saveDir: saveDir,
         engine: engine,
         refererEnabled: refererEnabled,
+        userAgent: document.getElementById('uaInput').value.trim(),
+        ja3: document.getElementById('ja3Input').value.trim(),
+        akamai: document.getElementById('akamaiInput').value.trim(),
         concurrency: CONCURRENCY
       };
 
@@ -2128,9 +2262,11 @@
           if (d.config) {
             if (d.config.lang) switchLanguage(d.config.lang, null, true);
             if (typeof d.config.opacity === 'number') setOpacity(d.config.opacity, true);
-            if (typeof d.config.blur === 'number') setBlur(d.config.blur, true);
             if (typeof d.config.refererEnabled === 'boolean') applyRefererUI(d.config.refererEnabled);
             if (d.config.saveDir) document.getElementById('dirInput').value = d.config.saveDir;
+            document.getElementById('uaInput').value = d.config.userAgent || DEFAULT_UA;
+            document.getElementById('ja3Input').value = d.config.ja3 || DEFAULT_JA3;
+            document.getElementById('akamaiInput').value = d.config.akamai || DEFAULT_AKAMAI;
           }
           updateModuleBadges(d.toolsReady, d.ffmpegVersion, d.ytdlpVersion, d.toolsFailed);
           if (Array.isArray(d.logs)) {
@@ -2420,7 +2556,10 @@
       window.addEventListener('resize', updateStageScale);
       updateStageScale();
       setOpacity(48, true);
-      setBlur(22, true);
+      document.getElementById('uaInput').value = DEFAULT_UA;
+      document.getElementById('ja3Input').value = DEFAULT_JA3;
+      document.getElementById('akamaiInput').value = DEFAULT_AKAMAI;
+      syncFingerprintLinkUI();
       updateClock();
       setInterval(updateClock, 1000);
       initLiquidTracking();

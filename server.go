@@ -114,13 +114,14 @@ func (s *AppServer) UpdateConfig(incoming AppConfig) {
 	if incoming.Opacity >= 15 && incoming.Opacity <= 85 {
 		s.config.Opacity = incoming.Opacity
 	}
-	if incoming.Blur >= 0 && incoming.Blur <= 40 {
-		s.config.Blur = incoming.Blur
-	}
+	s.config.Blur = 0
 	s.config.RefererEnabled = incoming.RefererEnabled
 	if incoming.SaveDir != "" {
 		s.config.SaveDir = incoming.SaveDir
 	}
+	s.config.UserAgent = incoming.UserAgent
+	s.config.JA3 = incoming.JA3
+	s.config.Akamai = incoming.Akamai
 	cfgCopy := s.config
 	s.mu.Unlock()
 
@@ -225,6 +226,9 @@ type downloadRequest struct {
 	SaveDir        string `json:"saveDir"`
 	Engine         string `json:"engine"`
 	RefererEnabled bool   `json:"refererEnabled"`
+	UserAgent      string `json:"userAgent"`
+	JA3            string `json:"ja3"`
+	Akamai         string `json:"akamai"`
 	Concurrency    int    `json:"concurrency"`
 }
 
@@ -246,7 +250,21 @@ func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 	s.activeCancel = cancel
 	s.activeEngine = engine
 	tools := s.tools
+	cfg := s.config
 	s.mu.Unlock()
+
+	ua := req.UserAgent
+	if ua == "" {
+		ua = cfg.UserAgent
+	}
+	ja3 := req.JA3
+	if ja3 == "" {
+		ja3 = cfg.JA3
+	}
+	akamai := req.Akamai
+	if akamai == "" {
+		akamai = cfg.Akamai
+	}
 
 	opts := DownloadOptions{
 		M3U8Url:        req.URL,
@@ -254,6 +272,9 @@ func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 		OutputDir:      req.SaveDir,
 		Engine:         engine,
 		RefererEnabled: req.RefererEnabled,
+		UserAgent:      ua,
+		JA3:            ja3,
+		Akamai:         akamai,
 		Concurrency:    DefaultConcurrency, // Always 1 thread
 		YtDlpPath:      tools.YtDlpPath,
 		FFmpegPath:     tools.FFmpegPath,

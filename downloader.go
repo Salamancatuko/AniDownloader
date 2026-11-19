@@ -53,6 +53,9 @@ type DownloadOptions struct {
 	OutputDir      string
 	Engine         string // "ytdlp" or "ffmpeg"
 	RefererEnabled bool
+	UserAgent      string
+	JA3            string
+	Akamai         string
 	Concurrency    int
 	YtDlpPath      string
 	FFmpegPath     string
@@ -91,12 +94,19 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 	// Enforce 1-thread concurrency
 	opt.Concurrency = DefaultConcurrency
 
+	ua := strings.TrimSpace(opt.UserAgent)
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	ja3 := strings.TrimSpace(opt.JA3)
+	akamai := strings.TrimSpace(opt.Akamai)
+
 	outFilePath := filepath.Join(opt.OutputDir, opt.Title+".mp4")
 
 	var cmd *exec.Cmd
 	var headerDesc string
 	if opt.RefererEnabled {
-		headerDesc = `--add-header "Origin: https://ani.gamer.com.tw" --add-header "Referer: https://ani.gamer.com.tw/"`
+		headerDesc = fmt.Sprintf(`Origin/Referer ON | UA="%s"`, ua)
 	} else {
 		headerDesc = "--no-headers"
 	}
@@ -109,11 +119,19 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 	}
 
 	cb.OnLog("[提示]", "#38bdf8", fmt.Sprintf("啟動下載引擎 [%s] | threads=%d | %s", engineUpper, opt.Concurrency, headerDesc))
+	if opt.RefererEnabled {
+		if ja3 != "" {
+			cb.OnLog("[指紋]", "#38bdf8", fmt.Sprintf("JA3=%s", ja3))
+		}
+		if akamai != "" {
+			cb.OnLog("[指紋]", "#38bdf8", fmt.Sprintf("Akamai=%s", akamai))
+		}
+	}
 
 	if opt.Engine == "ffmpeg" {
 		args := make([]string, 0, 16)
 		if opt.RefererEnabled {
-			headers := fmt.Sprintf("Origin: %s\r\nReferer: %s\r\nUser-Agent: %s\r\n", AnimeOrigin, AnimeReferer, AnimeUserAgent)
+			headers := fmt.Sprintf("Origin: %s\r\nReferer: %s\r\nUser-Agent: %s\r\n", AnimeOrigin, AnimeReferer, ua)
 			args = append(args, "-headers", headers)
 		}
 		args = append(args,
@@ -128,13 +146,16 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 		outTemplate := filepath.Join(opt.OutputDir, opt.Title+".%(ext)s")
 		ffmpegDir := filepath.Dir(opt.FFmpegPath)
 
-		args := make([]string, 0, 24)
+		args := make([]string, 0, 28)
 		if opt.RefererEnabled {
 			args = append(args,
 				"--add-header", fmt.Sprintf("Origin: %s", AnimeOrigin),
 				"--add-header", fmt.Sprintf("Referer: %s", AnimeReferer),
-				"--user-agent", AnimeUserAgent,
+				"--user-agent", ua,
 			)
+			if ja3 != "" || akamai != "" {
+				args = append(args, "--impersonate", "chrome")
+			}
 		}
 		args = append(args,
 			"--ffmpeg-location", ffmpegDir,
@@ -148,6 +169,16 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 			opt.M3U8Url,
 		)
 		cmd = exec.Command(opt.YtDlpPath, args...)
+		if opt.RefererEnabled {
+			env := os.Environ()
+			if ja3 != "" {
+				env = append(env, "YT_DLP_JA3="+ja3)
+			}
+			if akamai != "" {
+				env = append(env, "YT_DLP_AKAMAI="+akamai)
+			}
+			cmd.Env = env
+		}
 	}
 
 	// Hide console window on Windows

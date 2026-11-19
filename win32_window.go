@@ -223,6 +223,9 @@ type webMsg struct {
 	SaveDir        string     `json:"saveDir,omitempty"`
 	Engine         string     `json:"engine,omitempty"`
 	RefererEnabled bool       `json:"refererEnabled,omitempty"`
+	UserAgent      string     `json:"userAgent,omitempty"`
+	JA3            string     `json:"ja3,omitempty"`
+	Akamai         string     `json:"akamai,omitempty"`
 	Concurrency    int        `json:"concurrency,omitempty"`
 }
 
@@ -271,17 +274,11 @@ func loadAppIcon(hInstance uintptr) uintptr {
 	return h
 }
 
-func (a *DesktopApp) applyGlassBackdrop(blurLevel int) {
+func (a *DesktopApp) applyGlassBackdrop(_ int) {
 	if a.hwnd == 0 {
 		return
 	}
-	if blurLevel < 0 {
-		blurLevel = 0
-	}
-	if blurLevel > 40 {
-		blurLevel = 40
-	}
-	a.blurLevel = blurLevel
+	a.blurLevel = 0
 
 	// Ensure Windows 11 system backdrop is NONE so it does not paint an opaque grey fallback on WS_POPUP / unfocused windows
 	if procDwmSetWindowAttribute.Find() == nil {
@@ -295,24 +292,12 @@ func (a *DesktopApp) applyGlassBackdrop(blurLevel int) {
 		procDwmExtendFrameIntoClientArea.Call(a.hwnd, uintptr(unsafe.Pointer(&margins)))
 	}
 
-	// Use SetWindowCompositionAttribute (works on both Windows 10 & Windows 11, including WS_POPUP & unfocused state)
+	// Fixed blur=0: pure crystal-clear transparent glass (NO blur, NO black background)
 	if procSetWindowCompositionAttrib.Find() == nil {
-		var policy ACCENT_POLICY
-		policy.AccentFlags = 2
-		switch {
-		case blurLevel == 0:
-			// Pure crystal-clear transparent glass (0 blur, NO black background)
-			policy.AccentState = ACCENT_ENABLE_TRANSPARENTGRADIENT
-			policy.GradientColor = 0x01000000
-		case blurLevel <= 15:
-			// Light native frosted blur (visibly lighter/clearer than Acrylic)
-			policy.AccentState = ACCENT_ENABLE_BLURBEHIND
-			policy.GradientColor = 0x01100C08
-		default:
-			// Deep Acrylic frosted glass (16..40), with frost density scaling smoothly from 0x01 to 0x78
-			policy.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND
-			alpha := uint32(1 + ((blurLevel - 16) * 119 / 24))
-			policy.GradientColor = (alpha << 24) | 0x00221610
+		policy := ACCENT_POLICY{
+			AccentState:   ACCENT_ENABLE_TRANSPARENTGRADIENT,
+			AccentFlags:   2,
+			GradientColor: 0x01000000,
 		}
 		data := WINDOWCOMPOSITIONATTRIBDATA{
 			Attrib: WCA_ACCENT_POLICY,
@@ -547,6 +532,9 @@ func (a *DesktopApp) handleWebMessage(raw string) {
 				SaveDir:        m.SaveDir,
 				Engine:         m.Engine,
 				RefererEnabled: m.RefererEnabled,
+				UserAgent:      m.UserAgent,
+				JA3:            m.JA3,
+				Akamai:         m.Akamai,
 				Concurrency:    DefaultConcurrency,
 			})
 			if err != nil {

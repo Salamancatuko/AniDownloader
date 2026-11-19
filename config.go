@@ -6,12 +6,21 @@ import (
 	"path/filepath"
 )
 
+const (
+	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	DefaultJA3       = "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0"
+	DefaultAkamai    = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p"
+)
+
 type AppConfig struct {
 	Lang           string `json:"lang"`
 	Opacity        int    `json:"opacity"`
 	Blur           int    `json:"blur"`
 	RefererEnabled bool   `json:"refererEnabled"`
 	SaveDir        string `json:"saveDir"`
+	UserAgent      string `json:"userAgent"`
+	JA3            string `json:"ja3"`
+	Akamai         string `json:"akamai"`
 }
 
 func getConfigPath() string {
@@ -26,9 +35,12 @@ func DefaultConfig() AppConfig {
 	return AppConfig{
 		Lang:           "zh-TW",
 		Opacity:        48,
-		Blur:           22,
+		Blur:           0,
 		RefererEnabled: true,
 		SaveDir:        GetDefaultDownloadDir(),
+		UserAgent:      DefaultUserAgent,
+		JA3:            DefaultJA3,
+		Akamai:         DefaultAkamai,
 	}
 }
 
@@ -48,12 +60,19 @@ func LoadConfig() AppConfig {
 	if loaded.Opacity >= 15 && loaded.Opacity <= 85 {
 		cfg.Opacity = loaded.Opacity
 	}
-	if loaded.Blur >= 0 && loaded.Blur <= 40 {
-		cfg.Blur = loaded.Blur
-	}
+	cfg.Blur = 0
 	cfg.RefererEnabled = loaded.RefererEnabled
 	if loaded.SaveDir != "" {
 		cfg.SaveDir = loaded.SaveDir
+	}
+	if loaded.UserAgent != "" {
+		cfg.UserAgent = loaded.UserAgent
+	}
+	if loaded.JA3 != "" {
+		cfg.JA3 = loaded.JA3
+	}
+	if loaded.Akamai != "" {
+		cfg.Akamai = loaded.Akamai
 	}
 	return cfg
 }
@@ -67,12 +86,7 @@ func SaveConfig(cfg AppConfig) {
 	if cfg.Opacity > 85 {
 		cfg.Opacity = 85
 	}
-	if cfg.Blur < 0 {
-		cfg.Blur = 0
-	}
-	if cfg.Blur > 40 {
-		cfg.Blur = 40
-	}
+	cfg.Blur = 0
 	if cfg.Lang != "zh-TW" && cfg.Lang != "zh-CN" && cfg.Lang != "en" {
 		cfg.Lang = "zh-TW"
 	}
