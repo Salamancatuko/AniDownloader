@@ -87,9 +87,10 @@ const (
 	WM_ACTIVATE      = 0x0006
 	WM_CLOSE         = 0x0010
 	WM_NCLBUTTONDOWN = 0x00A1
-	WM_MOVING        = 0x0216
-	WM_DPICHANGED    = 0x02E0
-	WM_USER          = 0x0400
+	WM_MOVING                = 0x0216
+	WM_DPICHANGED            = 0x02E0
+	WM_DWMCOMPOSITIONCHANGED = 0x031E
+	WM_USER                  = 0x0400
 
 	WM_APP_DRAG     = WM_USER + 10
 	WM_APP_MINIMIZE = WM_USER + 11
@@ -202,6 +203,7 @@ type DesktopApp struct {
 	chromium         *edge.Chromium
 	server           *AppServer
 	win11RoundActive bool
+	blurEnabled      bool
 	pageReady        bool
 	browseResCh      chan string
 
@@ -272,32 +274,31 @@ func (a *DesktopApp) applyGlassBackdrop(enableBlur bool) {
 	if a.hwnd == 0 {
 		return
 	}
+	a.blurEnabled = enableBlur
+
+	// Ensure Windows 11 system backdrop is NONE so it does not paint an opaque grey fallback on WS_POPUP / unfocused windows
+	if procDwmSetWindowAttribute.Find() == nil {
+		none := uint32(DWMSBT_NONE)
+		procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, uintptr(unsafe.Pointer(&none)), 4)
+	}
+
 	// Extend DWM glass frame over the entire client area so WebView2 Alpha=0 is truly transparent
 	if procDwmExtendFrameIntoClientArea.Find() == nil {
 		margins := MARGINS{-1, -1, -1, -1}
 		procDwmExtendFrameIntoClientArea.Call(a.hwnd, uintptr(unsafe.Pointer(&margins)))
 	}
 
-	// Prefer native Windows 11 22H2+ Acrylic Backdrop (smooth drag, zero lag)
-	if procDwmSetWindowAttribute.Find() == nil {
-		backdrop := uint32(DWMSBT_NONE)
-		if enableBlur {
-			backdrop = uint32(DWMSBT_TRANSIENTWINDOW)
-		}
-		hr, _, _ := procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, uintptr(unsafe.Pointer(&backdrop)), 4)
-		if hr == 0 {
-			return
-		}
-	}
-
-	// Fallback for Windows 10 / Windows 11 21H2 via SetWindowCompositionAttribute
+	// Use SetWindowCompositionAttribute (works on both Windows 10 & Windows 11, including WS_POPUP & unfocused state)
 	if procSetWindowCompositionAttrib.Find() == nil {
 		var policy ACCENT_POLICY
 		if enableBlur {
-			policy.AccentState = ACCENT_ENABLE_BLURBEHIND
+			policy.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND
 			policy.AccentFlags = 2
-			policy.GradientColor = 0x01140E0C // Subtle tint; primary opacity controlled by CSS --glass-alpha
+			// AABBGGRR: Alpha=0x01 (minimal non-zero alpha required by Acrylic) so desktop wallpaper shows clearly;
+			// primary glass tint & opacity are controlled by CSS --glass-alpha.
+			policy.GradientColor = 0x01100C08
 		} else {
+			// Pure crystal-clear transparent glass (no blur, real desktop visible sharply behind)
 			policy.AccentState = ACCENT_DISABLED
 		}
 		data := WINDOWCOMPOSITIONATTRIBDATA{
@@ -435,6 +436,10 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 					app.chromium.Resize()
 				}
 			}
+			return 0
+
+		case WM_DWMCOMPOSITIONCHANGED:
+			app.applyGlassBackdrop(app.blurEnabled)
 			return 0
 
 		case WM_ACTIVATE:
@@ -631,6 +636,9 @@ func RunDesktopWindow(srv *AppServer) error {
 	procUpdateWindow.Call(hwnd)
 	procSetFocus.Call(hwnd)
 
+	// Re-apply DWM Acrylic backdrop after window is shown so Windows 11 DWM binds it to the active composition surface
+	app.applyGlassBackdrop(srv.config.Blur > 0)
+
 	dataDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "AniDownloader", "WebView2")
 	if os.Getenv("LOCALAPPDATA") == "" {
 		dataDir = filepath.Join(os.TempDir(), "AniDownloader", "WebView2")
@@ -642,6 +650,12 @@ func RunDesktopWindow(srv *AppServer) error {
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
 	chromium.MessageCallback = app.handleWebMessage
 	chromium.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
+		if ctrl := chromium.GetController(); ctrl != nil {
+			if ctrl2 := ctrl.GetICoreWebView2Controller2(); ctrl2 != nil {
+				_ = ctrl2.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 0, R: 0, G: 0, B: 0})
+			}
+		}
+		app.applyGlassBackdrop(app.blurEnabled)
 		chromium.Resize()
 		_ = chromium.Show()
 		app.pageReady = true
