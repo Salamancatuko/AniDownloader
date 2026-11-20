@@ -1,9 +1,13 @@
+//go:build windows
+
 package main
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 )
 
 const (
@@ -12,10 +16,11 @@ const (
 	DefaultAkamai    = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p"
 )
 
+var configSaveMu sync.Mutex
+
 type AppConfig struct {
 	Lang           string `json:"lang"`
 	Opacity        int    `json:"opacity"`
-	Blur           int    `json:"blur"`
 	RefererEnabled bool   `json:"refererEnabled"`
 	SaveDir        string `json:"saveDir"`
 	UserAgent      string `json:"userAgent"`
@@ -35,7 +40,6 @@ func DefaultConfig() AppConfig {
 	return AppConfig{
 		Lang:           "zh-TW",
 		Opacity:        48,
-		Blur:           0,
 		RefererEnabled: true,
 		SaveDir:        GetDefaultDownloadDir(),
 		UserAgent:      DefaultUserAgent,
@@ -50,43 +54,36 @@ func LoadConfig() AppConfig {
 	if err != nil {
 		return cfg
 	}
-	var loaded AppConfig
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		return cfg
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return DefaultConfig()
 	}
-	if loaded.Lang == "zh-TW" || loaded.Lang == "zh-CN" || loaded.Lang == "en" {
-		cfg.Lang = loaded.Lang
+	if cfg.Lang != "zh-TW" && cfg.Lang != "zh-CN" && cfg.Lang != "en" {
+		cfg.Lang = "zh-TW"
 	}
-	if loaded.Opacity >= 15 && loaded.Opacity <= 85 {
-		cfg.Opacity = loaded.Opacity
+	if cfg.Opacity < 15 {
+		cfg.Opacity = 15
+	} else if cfg.Opacity > 85 {
+		cfg.Opacity = 85
 	}
-	cfg.Blur = 0
-	cfg.RefererEnabled = loaded.RefererEnabled
-	if loaded.SaveDir != "" {
-		cfg.SaveDir = loaded.SaveDir
-	}
-	if loaded.UserAgent != "" {
-		cfg.UserAgent = loaded.UserAgent
-	}
-	if loaded.JA3 != "" {
-		cfg.JA3 = loaded.JA3
-	}
-	if loaded.Akamai != "" {
-		cfg.Akamai = loaded.Akamai
+	if strings.TrimSpace(cfg.SaveDir) == "" {
+		cfg.SaveDir = GetDefaultDownloadDir()
 	}
 	return cfg
 }
 
 func SaveConfig(cfg AppConfig) {
+	configSaveMu.Lock()
+	defer configSaveMu.Unlock()
+
 	p := getConfigPath()
-	_ = os.MkdirAll(filepath.Dir(p), 0755)
+	dir := filepath.Dir(p)
+	_ = os.MkdirAll(dir, 0755)
 	if cfg.Opacity < 15 {
 		cfg.Opacity = 15
 	}
 	if cfg.Opacity > 85 {
 		cfg.Opacity = 85
 	}
-	cfg.Blur = 0
 	if cfg.Lang != "zh-TW" && cfg.Lang != "zh-CN" && cfg.Lang != "en" {
 		cfg.Lang = "zh-TW"
 	}
@@ -94,5 +91,28 @@ func SaveConfig(cfg AppConfig) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(p, data, 0644)
+
+	tmpFile, err := os.CreateTemp(dir, "config-*.tmp")
+	if err != nil {
+		return
+	}
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if err := renameWithRetry(tmpPath, p); err != nil {
+		_ = os.Remove(tmpPath)
+	}
 }

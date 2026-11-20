@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -5,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +17,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 const (
 	AnimeOrigin        = "https://ani.gamer.com.tw"
 	AnimeReferer       = "https://ani.gamer.com.tw/"
-	AnimeUserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 	DefaultConcurrency = 1 // Enforced 1-thread segment concurrency per specification
 )
 
@@ -31,18 +34,87 @@ var (
 	ffmpegDurRegex       = regexp.MustCompile(`Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)`)
 	ffmpegTimeRegex      = regexp.MustCompile(`time=(\d+):(\d+):(\d+(?:\.\d+)?)`)
 	ffmpegSpeedRegex     = regexp.MustCompile(`speed=\s*([0-9.]+x)`)
+
+	windowsReservedDeviceNames = map[string]struct{}{
+		"CON": {}, "PRN": {}, "AUX": {}, "NUL": {},
+		"COM1": {}, "COM2": {}, "COM3": {}, "COM4": {}, "COM5": {}, "COM6": {}, "COM7": {}, "COM8": {}, "COM9": {},
+		"LPT1": {}, "LPT2": {}, "LPT3": {}, "LPT4": {}, "LPT5": {}, "LPT6": {}, "LPT7": {}, "LPT8": {}, "LPT9": {},
+	}
 )
 
-// SanitizeFilename cleans illegal Windows path characters and removes duplicate .mp4 suffix.
+func stripControlChars(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// sanitizeHeaderValue strips CR, LF, NUL and surrounding whitespace to prevent HTTP header CRLF injection.
+func sanitizeHeaderValue(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\r' || r == '\n' || r == '\x00' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// validateDownloadURL checks that the input URL is non-empty, contains no control characters,
+// and parses as an http or https URL with a non-empty host.
+func validateDownloadURL(raw string) (string, error) {
+	if strings.ContainsAny(raw, "\r\n\x00") {
+		return "", fmt.Errorf("m3u8 網址包含非法控制字元")
+	}
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return "", fmt.Errorf("請輸入有效的 m3u8 串聯鏈接/網址")
+	}
+	for _, r := range u {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("m3u8 網址包含非法控制字元")
+		}
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("m3u8 網址格式錯誤，必須為有效的 http:// 或 https:// 網址")
+	}
+	return u, nil
+}
+
+// SanitizeFilename cleans illegal Windows path characters, control characters,
+// duplicate .mp4 suffixes, trailing dots/spaces, overlong names, and reserved Windows device names.
 func SanitizeFilename(name string) string {
-	clean := strings.TrimSpace(name)
-	if strings.HasSuffix(strings.ToLower(clean), ".mp4") {
-		clean = clean[:len(clean)-4]
+	clean := stripControlChars(name)
+	clean = strings.TrimSpace(clean)
+	for strings.HasSuffix(strings.ToLower(clean), ".mp4") {
+		clean = strings.TrimSpace(clean[:len(clean)-4])
 	}
 	clean = invalidFilenameRegex.ReplaceAllString(clean, "_")
-	clean = strings.TrimSpace(clean)
+	clean = strings.TrimLeft(clean, " \t")
+	clean = strings.TrimRight(clean, ". \t")
+
+	runes := []rune(clean)
+	if len(runes) > 180 {
+		clean = string(runes[:180])
+		clean = strings.TrimRight(clean, ". \t")
+	}
+
 	if clean == "" {
 		clean = fmt.Sprintf("巴哈動畫瘋_%s", time.Now().Format("20060102_150405"))
+	}
+
+	base := strings.SplitN(clean, ".", 2)[0]
+	base = strings.ToUpper(strings.TrimRight(base, " \t"))
+	if _, reserved := windowsReservedDeviceNames[base]; reserved {
+		clean = "_" + clean
 	}
 	return clean
 }
@@ -74,14 +146,98 @@ type DownloadCallbacks struct {
 	OnProgress func(p ProgressUpdate)
 }
 
+func buildDownloadEnv(baseEnv []string) []string {
+	env := make([]string, 0, len(baseEnv)+2)
+	for _, kv := range baseEnv {
+		if strings.HasPrefix(kv, "YT_DLP_JA3=") || strings.HasPrefix(kv, "YT_DLP_AKAMAI=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env,
+		"PYTHONUTF8=1",
+		"PYTHONIOENCODING=utf-8:replace",
+	)
+	return env
+}
+
+func buildFFmpegArgs(opt DownloadOptions, ua, outFilePath string) []string {
+	ua = sanitizeHeaderValue(ua)
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	args := make([]string, 0, 12)
+	if opt.RefererEnabled {
+		headers := fmt.Sprintf("Origin: %s\r\nReferer: %s\r\nUser-Agent: %s\r\n", AnimeOrigin, AnimeReferer, ua)
+		args = append(args, "-headers", headers)
+	}
+	args = append(args,
+		"-i", opt.M3U8Url,
+		"-c", "copy",
+		"-bsf:a", "aac_adtstoasc",
+		"-y",
+		outFilePath,
+	)
+	return args
+}
+
+func buildYtDlpOutTemplate(outputDir, title string) string {
+	escapedDir := strings.ReplaceAll(outputDir, "%", "%%")
+	escapedTitle := strings.ReplaceAll(title, "%", "%%")
+	return filepath.Join(escapedDir, escapedTitle+".%(ext)s")
+}
+
+func buildYtDlpArgs(opt DownloadOptions, ua, ja3, akamai, outTemplate string) []string {
+	ua = sanitizeHeaderValue(ua)
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	concurrency := opt.Concurrency
+	if concurrency <= 0 {
+		concurrency = DefaultConcurrency
+	}
+	ffmpegDir := filepath.Dir(opt.FFmpegPath)
+
+	args := make([]string, 0, 26)
+	if opt.RefererEnabled {
+		args = append(args,
+			"--add-header", fmt.Sprintf("Origin: %s", AnimeOrigin),
+			"--add-header", fmt.Sprintf("Referer: %s", AnimeReferer),
+			"--user-agent", ua,
+		)
+		if ja3 != "" || akamai != "" {
+			args = append(args, "--impersonate", "chrome")
+		}
+	}
+	args = append(args,
+		"--encoding", "utf-8",
+		"--ffmpeg-location", ffmpegDir,
+		"-N", strconv.Itoa(concurrency),
+		"--no-part",
+		"--no-mtime",
+		"--force-overwrites",
+		"--newline",
+		"--remux-video", "mp4",
+		"--merge-output-format", "mp4",
+		"-o", outTemplate,
+		opt.M3U8Url,
+	)
+	return args
+}
+
 func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
-	opt.M3U8Url = strings.TrimSpace(opt.M3U8Url)
-	if opt.M3U8Url == "" {
-		return "", fmt.Errorf("請輸入有效的 m3u8 串聯鏈接/網址")
+	if cb.OnLog == nil {
+		cb.OnLog = func(string, string, string) {}
 	}
-	if !strings.HasPrefix(opt.M3U8Url, "http://") && !strings.HasPrefix(opt.M3U8Url, "https://") {
-		return "", fmt.Errorf("m3u8 網址格式錯誤，必須以 http:// 或 https:// 開頭")
+	if cb.OnProgress == nil {
+		cb.OnProgress = func(ProgressUpdate) {}
 	}
+
+	cleanURL, err := validateDownloadURL(opt.M3U8Url)
+	if err != nil {
+		return "", err
+	}
+	opt.M3U8Url = cleanURL
 
 	opt.Title = SanitizeFilename(opt.Title)
 	if strings.TrimSpace(opt.OutputDir) == "" {
@@ -94,7 +250,7 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 	// Enforce 1-thread concurrency
 	opt.Concurrency = DefaultConcurrency
 
-	ua := strings.TrimSpace(opt.UserAgent)
+	ua := sanitizeHeaderValue(opt.UserAgent)
 	if ua == "" {
 		ua = DefaultUserAgent
 	}
@@ -119,72 +275,20 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 	}
 
 	cb.OnLog("[提示]", "#38bdf8", fmt.Sprintf("啟動下載引擎 [%s] | threads=%d | %s", engineUpper, opt.Concurrency, headerDesc))
-	if opt.RefererEnabled {
-		if ja3 != "" {
-			cb.OnLog("[指紋]", "#38bdf8", fmt.Sprintf("JA3=%s", ja3))
-		}
-		if akamai != "" {
-			cb.OnLog("[指紋]", "#38bdf8", fmt.Sprintf("Akamai=%s", akamai))
-		}
+	if opt.Engine != "ffmpeg" && opt.RefererEnabled && (ja3 != "" || akamai != "") {
+		cb.OnLog("[指紋]", "#38bdf8", "標準版 YT-DLP 已啟用 --impersonate chrome（自定義 JA3/Akamai 保留供後續原生引擎使用）")
 	}
 
-	baseEnv := append(os.Environ(),
-		"PYTHONUTF8=1",
-		"PYTHONIOENCODING=utf-8:replace",
-	)
+	env := buildDownloadEnv(os.Environ())
 
 	if opt.Engine == "ffmpeg" {
-		args := make([]string, 0, 16)
-		if opt.RefererEnabled {
-			headers := fmt.Sprintf("Origin: %s\r\nReferer: %s\r\nUser-Agent: %s\r\n", AnimeOrigin, AnimeReferer, ua)
-			args = append(args, "-headers", headers)
-		}
-		args = append(args,
-			"-i", opt.M3U8Url,
-			"-c", "copy",
-			"-bsf:a", "aac_adtstoasc",
-			"-y",
-			outFilePath,
-		)
+		args := buildFFmpegArgs(opt, ua, outFilePath)
 		cmd = exec.Command(opt.FFmpegPath, args...)
-		cmd.Env = baseEnv
+		cmd.Env = env
 	} else {
-		outTemplate := filepath.Join(opt.OutputDir, opt.Title+".%(ext)s")
-		ffmpegDir := filepath.Dir(opt.FFmpegPath)
-
-		args := make([]string, 0, 30)
-		if opt.RefererEnabled {
-			args = append(args,
-				"--add-header", fmt.Sprintf("Origin: %s", AnimeOrigin),
-				"--add-header", fmt.Sprintf("Referer: %s", AnimeReferer),
-				"--user-agent", ua,
-			)
-			if ja3 != "" || akamai != "" {
-				args = append(args, "--impersonate", "chrome")
-			}
-		}
-		args = append(args,
-			"--encoding", "utf-8",
-			"--ffmpeg-location", ffmpegDir,
-			"-N", strconv.Itoa(opt.Concurrency),
-			"--concurrent-fragments", strconv.Itoa(opt.Concurrency),
-			"--no-part",
-			"--no-mtime",
-			"--newline",
-			"--merge-output-format", "mp4",
-			"-o", outTemplate,
-			opt.M3U8Url,
-		)
+		outTemplate := buildYtDlpOutTemplate(opt.OutputDir, opt.Title)
+		args := buildYtDlpArgs(opt, ua, ja3, akamai, outTemplate)
 		cmd = exec.Command(opt.YtDlpPath, args...)
-		env := baseEnv
-		if opt.RefererEnabled {
-			if ja3 != "" {
-				env = append(env, "YT_DLP_JA3="+ja3)
-			}
-			if akamai != "" {
-				env = append(env, "YT_DLP_AKAMAI="+akamai)
-			}
-		}
 		cmd.Env = env
 	}
 
@@ -207,13 +311,20 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 		return "", fmt.Errorf("啟動 %s 失敗: %w", engineUpper, err)
 	}
 
+	pid := 0
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+
 	// Kill entire Windows process tree (yt-dlp + child ffmpeg) if cancelled
 	stopWatch := make(chan struct{})
+	watchDone := make(chan struct{})
 	go func() {
+		defer close(watchDone)
 		select {
 		case <-ctx.Done():
-			if cmd.Process != nil {
-				killProcessTree(cmd.Process.Pid)
+			if pid > 0 {
+				killProcessTree(pid)
 			}
 		case <-stopWatch:
 		}
@@ -331,6 +442,7 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 	wg.Wait()
 	waitErr := cmd.Wait()
 	close(stopWatch)
+	<-watchDone
 
 	if ctx.Err() == context.Canceled {
 		cb.OnLog("[警告]", "#fbbf24", "使用者手動中止任務。")
@@ -342,6 +454,11 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 		return "", fmt.Errorf("下載失敗，請檢查 m3u8 網址或 Console 日誌: %w", waitErr)
 	}
 
+	if !fileExistsNonEmpty(outFilePath) {
+		cb.OnLog("[錯誤]", "#f87171", fmt.Sprintf("下載完成但找不到輸出檔案: %s", outFilePath))
+		return "", fmt.Errorf("下載完成但未產生有效的 MP4 輸出檔案: %s", outFilePath)
+	}
+
 	cb.OnLog("[完成]", "#34d399", fmt.Sprintf("任務完成，已輸出檔案至 %s", outFilePath))
 	return outFilePath, nil
 }
@@ -350,7 +467,9 @@ func killProcessTree(pid int) {
 	if pid <= 0 {
 		return
 	}
-	tk := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid))
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	tk := exec.CommandContext(ctx, "taskkill", "/F", "/T", "/PID", strconv.Itoa(pid))
 	tk.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	_ = tk.Run()
 }

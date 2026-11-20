@@ -1,0 +1,43 @@
+THIRD-PARTY SOFTWARE LICENSES AND NOTICES
+=========================================
+
+AniDownloader embeds or links against the following third-party software components.
+All respective copyrights and license terms remain with their original authors.
+
+--------------------------------------------------------------------------------
+1. FFmpeg (6.1.1-essentials_build-www.gyan.dev)
+--------------------------------------------------------------------------------
+Project / Source: https://ffmpeg.org/
+Windows Builds:   https://www.gyan.dev/ffmpeg/builds/
+Build Config:     --enable-gpl --enable-version3
+License:          GNU General Public License v3.0 (GPLv3)
+Full License Text: https://www.gnu.org/licenses/gpl-3.0.txt
+
+Because this distribution embeds FFmpeg built with `--enable-gpl --enable-version3`,
+the bundled `ffmpeg.exe` binary is governed by the terms of the GNU GPL v3.0
+(or later, depending on component configurations). Users may obtain the
+corresponding FFmpeg source code from https://ffmpeg.org/download.html and the
+gyan.dev build scripts / release archives.
+
+--------------------------------------------------------------------------------
+2. yt-dlp (2026.10.26)
+--------------------------------------------------------------------------------
+Project / Source: https://github.com/yt-dlp/yt-dlp
+License:          The Unlicense (Public Domain)
+Full License Text: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+
+--------------------------------------------------------------------------------
+3. go-webview2 & go-winloader
+--------------------------------------------------------------------------------
+Packages:         github.com/jchv/go-webview2
+                  github.com/jchv/go-winloader
+License:          MIT License
+Source:           https://github.com/jchv/go-webview2
+                  https://github.com/jchv/go-winloader
+
+--------------------------------------------------------------------------------
+4. golang.org/x/sys
+--------------------------------------------------------------------------------
+Package:          golang.org/x/sys
+License:          BSD 3-Clause License
+Source:           https://cs.opensource.google/go/x/sys

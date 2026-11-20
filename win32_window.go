@@ -1,5 +1,4 @@
 //go:build windows
-// +build windows
 
 package main
 
@@ -11,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -29,33 +29,34 @@ var (
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 	comdlg32 = syscall.NewLazyDLL("comdlg32.dll")
 
-	procGetModuleHandleW            = kernel32.NewProc("GetModuleHandleW")
-	procMultiByteToWideChar         = kernel32.NewProc("MultiByteToWideChar")
-	procRegisterClassExW            = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW             = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW              = user32.NewProc("DefWindowProcW")
-	procDestroyWindow               = user32.NewProc("DestroyWindow")
-	procShowWindow                  = user32.NewProc("ShowWindow")
-	procUpdateWindow                = user32.NewProc("UpdateWindow")
-	procSetFocus                    = user32.NewProc("SetFocus")
-	procGetMessageW                 = user32.NewProc("GetMessageW")
-	procTranslateMessage            = user32.NewProc("TranslateMessage")
-	procDispatchMessageW            = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage             = user32.NewProc("PostQuitMessage")
-	procSendMessageW                = user32.NewProc("SendMessageW")
-	procPostMessageW                = user32.NewProc("PostMessageW")
-	procReleaseCapture              = user32.NewProc("ReleaseCapture")
-	procSetWindowPos                = user32.NewProc("SetWindowPos")
-	procSetWindowRgn                = user32.NewProc("SetWindowRgn")
-	procGetSystemMetrics            = user32.NewProc("GetSystemMetrics")
-	procLoadImageW                  = user32.NewProc("LoadImageW")
-	procLoadCursorW                 = user32.NewProc("LoadCursorW")
-	procSetProcessDPIAware          = user32.NewProc("SetProcessDPIAware")
-	procSetProcessDpiAwarenessCtx   = user32.NewProc("SetProcessDpiAwarenessContext")
-	procGetDpiForWindow             = user32.NewProc("GetDpiForWindow")
-	procGetDpiForSystem             = user32.NewProc("GetDpiForSystem")
-	procMessageBoxW                 = user32.NewProc("MessageBoxW")
-	procSetWindowCompositionAttrib  = user32.NewProc("SetWindowCompositionAttribute")
+	procGetModuleHandleW           = kernel32.NewProc("GetModuleHandleW")
+	procMultiByteToWideChar        = kernel32.NewProc("MultiByteToWideChar")
+	procRtlMoveMemory              = kernel32.NewProc("RtlMoveMemory")
+	procRegisterClassExW           = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW            = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW             = user32.NewProc("DefWindowProcW")
+	procDestroyWindow              = user32.NewProc("DestroyWindow")
+	procShowWindow                 = user32.NewProc("ShowWindow")
+	procUpdateWindow               = user32.NewProc("UpdateWindow")
+	procSetFocus                   = user32.NewProc("SetFocus")
+	procGetMessageW                = user32.NewProc("GetMessageW")
+	procTranslateMessage           = user32.NewProc("TranslateMessage")
+	procDispatchMessageW           = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage            = user32.NewProc("PostQuitMessage")
+	procSendMessageW               = user32.NewProc("SendMessageW")
+	procPostMessageW               = user32.NewProc("PostMessageW")
+	procReleaseCapture             = user32.NewProc("ReleaseCapture")
+	procSetWindowPos               = user32.NewProc("SetWindowPos")
+	procSetWindowRgn               = user32.NewProc("SetWindowRgn")
+	procGetSystemMetrics           = user32.NewProc("GetSystemMetrics")
+	procLoadImageW                 = user32.NewProc("LoadImageW")
+	procLoadCursorW                = user32.NewProc("LoadCursorW")
+	procSetProcessDPIAware         = user32.NewProc("SetProcessDPIAware")
+	procSetProcessDpiAwarenessCtx  = user32.NewProc("SetProcessDpiAwarenessContext")
+	procGetDpiForWindow            = user32.NewProc("GetDpiForWindow")
+	procGetDpiForSystem            = user32.NewProc("GetDpiForSystem")
+	procMessageBoxW                = user32.NewProc("MessageBoxW")
+	procSetWindowCompositionAttrib = user32.NewProc("SetWindowCompositionAttribute")
 
 	procGetStockObject     = gdi32.NewProc("GetStockObject")
 	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
@@ -67,9 +68,10 @@ var (
 	procSHBrowseForFolderW   = shell32.NewProc("SHBrowseForFolderW")
 	procSHGetPathFromIDListW = shell32.NewProc("SHGetPathFromIDListW")
 
-	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
-	procCoTaskMemFree  = ole32.NewProc("CoTaskMemFree")
-	procCoUninitialize = ole32.NewProc("CoUninitialize")
+	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
+	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
+	procCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
+	procCoUninitialize   = ole32.NewProc("CoUninitialize")
 
 	procGetSaveFileNameW = comdlg32.NewProc("GetSaveFileNameW")
 )
@@ -88,12 +90,16 @@ const (
 	SW_SHOW       = 5
 	SW_MINIMIZE   = 6
 
-	WM_DESTROY       = 0x0002
-	WM_MOVE          = 0x0003
-	WM_SIZE          = 0x0005
-	WM_ACTIVATE      = 0x0006
-	WM_CLOSE         = 0x0010
-	WM_NCLBUTTONDOWN = 0x00A1
+	MB_OK              = 0x00000000
+	MB_ICONERROR       = 0x00000010
+	MB_ICONINFORMATION = 0x00000040
+
+	WM_DESTROY               = 0x0002
+	WM_MOVE                  = 0x0003
+	WM_SIZE                  = 0x0005
+	WM_ACTIVATE              = 0x0006
+	WM_CLOSE                 = 0x0010
+	WM_NCLBUTTONDOWN         = 0x00A1
 	WM_MOVING                = 0x0216
 	WM_DPICHANGED            = 0x02E0
 	WM_DWMCOMPOSITIONCHANGED = 0x031E
@@ -103,7 +109,6 @@ const (
 	WM_APP_MINIMIZE = WM_USER + 11
 	WM_APP_BROWSE   = WM_USER + 12
 	WM_APP_EVAL     = WM_USER + 13
-	WM_APP_BLUR     = WM_USER + 14
 	WM_APP_EXPORT   = WM_USER + 15
 
 	OFN_OVERWRITEPROMPT = 0x00000002
@@ -132,14 +137,113 @@ const (
 	DWMWCP_ROUND                   = 2
 	DWMWA_SYSTEMBACKDROP_TYPE      = 38
 	DWMSBT_NONE                    = 1
-	DWMSBT_TRANSIENTWINDOW         = 3 // Native Windows 11 Acrylic
 
 	WCA_ACCENT_POLICY                 = 19
-	ACCENT_DISABLED                   = 0
 	ACCENT_ENABLE_TRANSPARENTGRADIENT = 2
-	ACCENT_ENABLE_BLURBEHIND          = 3
-	ACCENT_ENABLE_ACRYLICBLURBEHIND   = 4
+
+	CLSCTX_INPROC_SERVER = 0x1
+	FOS_NOCHANGEDIR      = 0x00000008
+	FOS_PICKFOLDERS      = 0x00000020
+	FOS_FORCEFILESYSTEM  = 0x00000040
+	SIGDN_FILESYSPATH    = 0x80058000
 )
+
+type guid struct {
+	Data1 uint32
+	Data2 uint16
+	Data3 uint16
+	Data4 [8]byte
+}
+
+var (
+	clsidFileOpenDialog = guid{0xDC1C5A9C, 0xE88A, 0x4DDE, [8]byte{0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7}}
+	iidIFileOpenDialog  = guid{0xD57C7288, 0xD4AD, 0x4768, [8]byte{0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60}}
+)
+
+type iFileOpenDialogVtbl struct {
+	QueryInterface      uintptr
+	AddRef              uintptr
+	Release             uintptr
+	Show                uintptr
+	SetFileTypes        uintptr
+	SetFileTypeIndex    uintptr
+	GetFileTypeIndex    uintptr
+	Advise              uintptr
+	Unadvise            uintptr
+	SetOptions          uintptr
+	GetOptions          uintptr
+	SetDefaultFolder    uintptr
+	SetFolder           uintptr
+	GetFolder           uintptr
+	GetCurrentSelection uintptr
+	SetFileName         uintptr
+	GetFileName         uintptr
+	SetTitle            uintptr
+	SetOkButtonLabel    uintptr
+	SetFileNameLabel    uintptr
+	GetResult           uintptr
+}
+
+type iFileOpenDialog struct {
+	vtbl *iFileOpenDialogVtbl
+}
+
+type iShellItemVtbl struct {
+	QueryInterface uintptr
+	AddRef         uintptr
+	Release        uintptr
+	BindToHandler  uintptr
+	GetParent      uintptr
+	GetDisplayName uintptr
+}
+
+type iShellItem struct {
+	vtbl *iShellItemVtbl
+}
+
+type comWebView2ControllerVtbl struct {
+	QueryInterface                    uintptr
+	AddRef                            uintptr
+	Release                           uintptr
+	GetIsVisible                      uintptr
+	PutIsVisible                      uintptr
+	GetBounds                         uintptr
+	PutBounds                         uintptr
+	GetZoomFactor                     uintptr
+	PutZoomFactor                     uintptr
+	AddZoomFactorChanged              uintptr
+	RemoveZoomFactorChanged           uintptr
+	SetBoundsAndZoomFactor            uintptr
+	MoveFocus                         uintptr
+	AddMoveFocusRequested             uintptr
+	RemoveMoveFocusRequested          uintptr
+	AddGotFocus                       uintptr
+	RemoveGotFocus                    uintptr
+	AddLostFocus                      uintptr
+	RemoveLostFocus                   uintptr
+	AddAcceleratorKeyPressed          uintptr
+	RemoveAcceleratorKeyPressed       uintptr
+	GetParentWindow                   uintptr
+	PutParentWindow                   uintptr
+	NotifyParentWindowPositionChanged uintptr
+	Close                             uintptr
+	GetCoreWebView2                   uintptr
+}
+
+type comWebView2Controller struct {
+	vtbl *comWebView2ControllerVtbl
+}
+
+func closeWebViewController(ctrl *edge.ICoreWebView2Controller) {
+	if ctrl == nil {
+		return
+	}
+	raw := (*comWebView2Controller)(unsafe.Pointer(ctrl))
+	if raw.vtbl == nil || raw.vtbl.Close == 0 {
+		return
+	}
+	_, _, _ = syscall.SyscallN(raw.vtbl.Close, uintptr(unsafe.Pointer(ctrl)))
+}
 
 type WNDCLASSEXW struct {
 	CbSize        uint32
@@ -243,9 +347,11 @@ type DesktopApp struct {
 	chromium         *edge.Chromium
 	server           *AppServer
 	win11RoundActive bool
-	blurLevel        int
-	pageReady        bool
+	pageReady        atomic.Bool
+	closing          atomic.Bool
 	browseResCh      chan string
+	closedCh         chan struct{}
+	closeOnce        sync.Once
 
 	evalMu    sync.Mutex
 	evalQueue []string
@@ -259,7 +365,6 @@ var gDesktop *DesktopApp
 type webMsg struct {
 	Action         string     `json:"action"`
 	Config         *AppConfig `json:"config,omitempty"`
-	Blur           int        `json:"blur,omitempty"`
 	URL            string     `json:"url,omitempty"`
 	Title          string     `json:"title,omitempty"`
 	SaveDir        string     `json:"saveDir,omitempty"`
@@ -275,6 +380,38 @@ type webMsg struct {
 func utf16Ptr(s string) *uint16 {
 	p, _ := syscall.UTF16PtrFromString(s)
 	return p
+}
+
+func utf16PtrToString(p *uint16) string {
+	if p == nil {
+		return ""
+	}
+	var units []uint16
+	for offset := uintptr(0); ; offset += 2 {
+		ch := *(*uint16)(unsafe.Add(unsafe.Pointer(p), offset))
+		if ch == 0 {
+			break
+		}
+		units = append(units, ch)
+	}
+	return syscall.UTF16ToString(units)
+}
+
+func readRectFromLParam(lparam uintptr) RECT {
+	var r RECT
+	if procRtlMoveMemory.Find() == nil {
+		procRtlMoveMemory.Call(uintptr(unsafe.Pointer(&r)), lparam, unsafe.Sizeof(r))
+	}
+	return r
+}
+
+func showErrorMessageBox(title, msg string) {
+	procMessageBoxW.Call(
+		0,
+		uintptr(unsafe.Pointer(utf16Ptr(msg))),
+		uintptr(unsafe.Pointer(utf16Ptr(title))),
+		MB_OK|MB_ICONERROR,
+	)
 }
 
 // decodeConsoleBytes ensures subprocess output from yt-dlp / ffmpeg on Windows
@@ -354,25 +491,39 @@ func loadAppIcon(hInstance uintptr) uintptr {
 	return h
 }
 
-func (a *DesktopApp) applyGlassBackdrop(_ int) {
-	if a.hwnd == 0 {
+func (a *DesktopApp) getHwnd() uintptr {
+	a.evalMu.Lock()
+	hwnd := a.hwnd
+	a.evalMu.Unlock()
+	return hwnd
+}
+
+func (a *DesktopApp) getChromium() *edge.Chromium {
+	a.evalMu.Lock()
+	chromium := a.chromium
+	a.evalMu.Unlock()
+	return chromium
+}
+
+func (a *DesktopApp) applyGlassBackdrop() {
+	hwnd := a.getHwnd()
+	if hwnd == 0 {
 		return
 	}
-	a.blurLevel = 0
 
 	// Ensure Windows 11 system backdrop is NONE so it does not paint an opaque grey fallback on WS_POPUP / unfocused windows
 	if procDwmSetWindowAttribute.Find() == nil {
 		none := uint32(DWMSBT_NONE)
-		procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, uintptr(unsafe.Pointer(&none)), 4)
+		procDwmSetWindowAttribute.Call(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, uintptr(unsafe.Pointer(&none)), 4)
 	}
 
 	// Extend DWM glass frame over the entire client area so WebView2 Alpha=0 is truly transparent
 	if procDwmExtendFrameIntoClientArea.Find() == nil {
 		margins := MARGINS{-1, -1, -1, -1}
-		procDwmExtendFrameIntoClientArea.Call(a.hwnd, uintptr(unsafe.Pointer(&margins)))
+		procDwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
 	}
 
-	// Fixed blur=0: pure crystal-clear transparent glass (NO blur, NO black background)
+	// Pure crystal-clear transparent glass (NO blur, NO black background)
 	if procSetWindowCompositionAttrib.Find() == nil {
 		policy := ACCENT_POLICY{
 			AccentState:   ACCENT_ENABLE_TRANSPARENTGRADIENT,
@@ -384,17 +535,21 @@ func (a *DesktopApp) applyGlassBackdrop(_ int) {
 			PvData: uintptr(unsafe.Pointer(&policy)),
 			CbData: unsafe.Sizeof(policy),
 		}
-		procSetWindowCompositionAttrib.Call(a.hwnd, uintptr(unsafe.Pointer(&data)))
+		procSetWindowCompositionAttrib.Call(hwnd, uintptr(unsafe.Pointer(&data)))
 	}
 }
 
 func (a *DesktopApp) applyRoundedCorners(w, h, dpi int32) {
+	hwnd := a.getHwnd()
+	if hwnd == 0 {
+		return
+	}
 	dark := uint32(1)
 	if procDwmSetWindowAttribute.Find() == nil {
-		procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, uintptr(unsafe.Pointer(&dark)), 4)
+		procDwmSetWindowAttribute.Call(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, uintptr(unsafe.Pointer(&dark)), 4)
 
 		pref := uint32(DWMWCP_ROUND)
-		hr, _, _ := procDwmSetWindowAttribute.Call(a.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, uintptr(unsafe.Pointer(&pref)), 4)
+		hr, _, _ := procDwmSetWindowAttribute.Call(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, uintptr(unsafe.Pointer(&pref)), 4)
 		if hr == 0 {
 			a.win11RoundActive = true
 			return
@@ -407,22 +562,29 @@ func (a *DesktopApp) applyRoundedCorners(w, h, dpi int32) {
 	}
 	rgn, _, _ := procCreateRoundRectRgn.Call(0, 0, uintptr(w+1), uintptr(h+1), uintptr(r*2), uintptr(r*2))
 	if rgn != 0 {
-		procSetWindowRgn.Call(a.hwnd, rgn, 1)
+		procSetWindowRgn.Call(hwnd, rgn, 1)
 	}
 }
 
 func (a *DesktopApp) EvalJS(js string) {
-	if a.hwnd == 0 || a.chromium == nil {
+	if a.closing.Load() {
 		return
 	}
 	a.evalMu.Lock()
+	hwnd := a.hwnd
+	chromium := a.chromium
+	if hwnd == 0 || chromium == nil || a.closing.Load() {
+		a.evalMu.Unlock()
+		return
+	}
 	a.evalQueue = append(a.evalQueue, js)
 	a.evalMu.Unlock()
-	procPostMessageW.Call(a.hwnd, WM_APP_EVAL, 0, 0)
+
+	procPostMessageW.Call(hwnd, WM_APP_EVAL, 0, 0)
 }
 
 func (a *DesktopApp) EmitToWeb(event string, jsonPayload string) {
-	if !a.pageReady {
+	if a.closing.Load() || !a.pageReady.Load() {
 		return
 	}
 	evBytes, _ := json.Marshal(event)
@@ -431,7 +593,7 @@ func (a *DesktopApp) EmitToWeb(event string, jsonPayload string) {
 }
 
 func (a *DesktopApp) PushInitState() {
-	if a.server == nil {
+	if a.server == nil || a.closing.Load() {
 		return
 	}
 	state := a.server.GetInitState()
@@ -444,7 +606,7 @@ func (a *DesktopApp) PushInitState() {
 
 func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	app := gDesktop
-	if app != nil && hwnd == app.hwnd {
+	if app != nil && hwnd == app.getHwnd() {
 		switch msg {
 		case WM_APP_DRAG:
 			procReleaseCapture.Call()
@@ -453,10 +615,6 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 		case WM_APP_MINIMIZE:
 			procShowWindow.Call(hwnd, SW_MINIMIZE)
-			return 0
-
-		case WM_APP_BLUR:
-			app.applyGlassBackdrop(int(wparam))
 			return 0
 
 		case WM_APP_BROWSE:
@@ -480,9 +638,7 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 			initialDir := ""
 			if app.server != nil {
-				app.server.mu.Lock()
-				initialDir = app.server.config.SaveDir
-				app.server.mu.Unlock()
+				initialDir = app.server.GetConfig().SaveDir
 			}
 
 			targetPath := showSaveLogDialog(hwnd, initialDir)
@@ -500,32 +656,41 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 			return 0
 
 		case WM_APP_EVAL:
+			if app.closing.Load() {
+				return 0
+			}
 			app.evalMu.Lock()
 			q := app.evalQueue
 			app.evalQueue = nil
+			chromium := app.chromium
 			app.evalMu.Unlock()
-			if app.chromium != nil {
+			if chromium != nil && !app.closing.Load() {
 				for _, js := range q {
-					app.chromium.Eval(js)
+					chromium.Eval(js)
 				}
 			}
 			return 0
 
 		case WM_MOVE, WM_MOVING:
-			if app.chromium != nil {
-				_ = app.chromium.NotifyParentWindowPositionChanged()
+			if chromium := app.getChromium(); chromium != nil && !app.closing.Load() {
+				_ = chromium.NotifyParentWindowPositionChanged()
 			}
 
 		case WM_SIZE:
-			if app.chromium != nil {
-				app.chromium.Resize()
+			if chromium := app.getChromium(); chromium != nil && !app.closing.Load() {
+				chromium.Resize()
 			}
 			return 0
 
 		case WM_DPICHANGED:
 			newDPI := int32(wparam & 0xFFFF)
 			if newDPI >= 96 {
-				suggested := (*RECT)(unsafe.Pointer(lparam))
+				var suggested RECT
+				if lparam != 0 {
+					// Copy RECT via unsafe.Slice-free field read using GetWindowRect-safe pattern,
+					// or read 4 int32s from lparam via reflect/unsafe helper to keep go vet clean.
+					suggested = readRectFromLParam(lparam)
+				}
 				physW := int32(logicalWinWidth * newDPI / 96)
 				physH := int32(logicalWinHeight * newDPI / 96)
 				procSetWindowPos.Call(
@@ -537,29 +702,51 @@ func desktopWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 				if !app.win11RoundActive {
 					app.applyRoundedCorners(physW, physH, newDPI)
 				}
-				if app.chromium != nil {
-					app.chromium.Resize()
+				if chromium := app.getChromium(); chromium != nil && !app.closing.Load() {
+					chromium.Resize()
 				}
 			}
 			return 0
 
 		case WM_DWMCOMPOSITIONCHANGED:
-			app.applyGlassBackdrop(app.blurLevel)
+			app.applyGlassBackdrop()
 			return 0
 
 		case WM_ACTIVATE:
-			if wparam != WA_INACTIVE && app.chromium != nil {
-				app.chromium.Focus()
+			if wparam != WA_INACTIVE && !app.closing.Load() {
+				if chromium := app.getChromium(); chromium != nil {
+					chromium.Focus()
+				}
 			}
 
 		case WM_CLOSE:
+			app.closing.Store(true)
+			app.evalMu.Lock()
+			chromium := app.chromium
+			app.chromium = nil
+			app.evalQueue = nil
+			app.evalMu.Unlock()
 			if app.server != nil {
+				app.server.SetNativeEmitFn(nil)
 				app.server.StopActiveDownload()
+			}
+			if chromium != nil {
+				if ctrl := chromium.GetController(); ctrl != nil {
+					closeWebViewController(ctrl)
+				}
 			}
 			procDestroyWindow.Call(hwnd)
 			return 0
 
 		case WM_DESTROY:
+			app.closing.Store(true)
+			app.evalMu.Lock()
+			app.hwnd = 0
+			app.evalQueue = nil
+			app.evalMu.Unlock()
+			app.closeOnce.Do(func() {
+				close(app.closedCh)
+			})
 			procPostQuitMessage.Call(0)
 			return 0
 		}
@@ -575,6 +762,64 @@ func showFolderDialog(owner uintptr) string {
 		defer procCoUninitialize.Call()
 	}
 
+	if path, ok := showFolderDialogVista(owner); ok {
+		return path
+	}
+	return showFolderDialogLegacy(owner)
+}
+
+func showFolderDialogVista(owner uintptr) (string, bool) {
+	if procCoCreateInstance.Find() != nil {
+		return "", false
+	}
+
+	var dlg *iFileOpenDialog
+	hr, _, _ := procCoCreateInstance.Call(
+		uintptr(unsafe.Pointer(&clsidFileOpenDialog)),
+		0,
+		CLSCTX_INPROC_SERVER,
+		uintptr(unsafe.Pointer(&iidIFileOpenDialog)),
+		uintptr(unsafe.Pointer(&dlg)),
+	)
+	if hr != 0 || dlg == nil {
+		return "", false
+	}
+	defer syscall.SyscallN(dlg.vtbl.Release, uintptr(unsafe.Pointer(dlg)))
+
+	var opts uint32
+	hr, _, _ = syscall.SyscallN(dlg.vtbl.GetOptions, uintptr(unsafe.Pointer(dlg)), uintptr(unsafe.Pointer(&opts)))
+	if hr == 0 {
+		opts |= FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR
+		_, _, _ = syscall.SyscallN(dlg.vtbl.SetOptions, uintptr(unsafe.Pointer(dlg)), uintptr(opts))
+	}
+
+	titlePtr := utf16Ptr("請選擇動畫瘋影片儲存目錄")
+	_, _, _ = syscall.SyscallN(dlg.vtbl.SetTitle, uintptr(unsafe.Pointer(dlg)), uintptr(unsafe.Pointer(titlePtr)))
+
+	hr, _, _ = syscall.SyscallN(dlg.vtbl.Show, uintptr(unsafe.Pointer(dlg)), owner)
+	if hr != 0 {
+		// User cancelled or closed the dialog: do NOT fall back to legacy dialog.
+		return "", true
+	}
+
+	var item *iShellItem
+	hr, _, _ = syscall.SyscallN(dlg.vtbl.GetResult, uintptr(unsafe.Pointer(dlg)), uintptr(unsafe.Pointer(&item)))
+	if hr != 0 || item == nil {
+		return "", true
+	}
+	defer syscall.SyscallN(item.vtbl.Release, uintptr(unsafe.Pointer(item)))
+
+	var pathPtr *uint16
+	hr, _, _ = syscall.SyscallN(item.vtbl.GetDisplayName, uintptr(unsafe.Pointer(item)), SIGDN_FILESYSPATH, uintptr(unsafe.Pointer(&pathPtr)))
+	if hr != 0 || pathPtr == nil {
+		return "", true
+	}
+	defer procCoTaskMemFree.Call(uintptr(unsafe.Pointer(pathPtr)))
+
+	return utf16PtrToString(pathPtr), true
+}
+
+func showFolderDialogLegacy(owner uintptr) string {
 	var bi BROWSEINFO
 	bi.HwndOwner = owner
 	bi.LpszTitle = utf16Ptr("請選擇動畫瘋影片儲存目錄")
@@ -592,6 +837,12 @@ func showFolderDialog(owner uintptr) string {
 		return ""
 	}
 	return syscall.UTF16ToString(pathBuf[:])
+}
+
+func browseFolderStandalone() string {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	return showFolderDialog(0)
 }
 
 func showSaveLogDialog(owner uintptr, initialDir string) string {
@@ -635,50 +886,75 @@ func showSaveLogDialog(owner uintptr, initialDir string) string {
 }
 
 func (a *DesktopApp) BrowseFolder() string {
-	if a.hwnd != 0 {
+	if a.closing.Load() {
+		return ""
+	}
+	hwnd := a.getHwnd()
+	if hwnd != 0 {
 		select {
 		case <-a.browseResCh:
 		default:
 		}
-		procPostMessageW.Call(a.hwnd, WM_APP_BROWSE, 0, 0)
-		return <-a.browseResCh
+		posted, _, _ := procPostMessageW.Call(hwnd, WM_APP_BROWSE, 0, 0)
+		if posted == 0 {
+			return ""
+		}
+		select {
+		case res := <-a.browseResCh:
+			return res
+		case <-a.closedCh:
+			return ""
+		}
 	}
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	return showFolderDialog(0)
+	return browseFolderStandalone()
 }
 
 func (a *DesktopApp) handleWebMessage(raw string) {
+	if a.closing.Load() {
+		return
+	}
 	var m webMsg
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return
 	}
 	switch m.Action {
 	case "drag":
-		procPostMessageW.Call(a.hwnd, WM_APP_DRAG, 0, 0)
+		if hwnd := a.getHwnd(); hwnd != 0 && !a.closing.Load() {
+			procPostMessageW.Call(hwnd, WM_APP_DRAG, 0, 0)
+		}
 	case "minimize":
-		procPostMessageW.Call(a.hwnd, WM_APP_MINIMIZE, 0, 0)
+		if hwnd := a.getHwnd(); hwnd != 0 && !a.closing.Load() {
+			procPostMessageW.Call(hwnd, WM_APP_MINIMIZE, 0, 0)
+		}
 	case "close":
-		procPostMessageW.Call(a.hwnd, WM_CLOSE, 0, 0)
-	case "set_blur":
-		procPostMessageW.Call(a.hwnd, WM_APP_BLUR, uintptr(m.Blur), 0)
+		if hwnd := a.getHwnd(); hwnd != 0 && !a.closing.Load() {
+			procPostMessageW.Call(hwnd, WM_CLOSE, 0, 0)
+		}
 	case "init":
-		a.pageReady = true
+		a.pageReady.Store(true)
 		a.PushInitState()
 	case "save_config":
 		if m.Config != nil && a.server != nil {
 			a.server.UpdateConfig(*m.Config)
 		}
 	case "browse":
-		procPostMessageW.Call(a.hwnd, WM_APP_BROWSE, 0, 0)
+		if hwnd := a.getHwnd(); hwnd != 0 && !a.closing.Load() {
+			procPostMessageW.Call(hwnd, WM_APP_BROWSE, 0, 0)
+		}
+	case "clear_logs":
+		if a.server != nil {
+			a.server.ClearLogs()
+		}
 	case "export_logs":
 		a.exportMu.Lock()
 		a.exportContent = m.Content
 		a.exportMu.Unlock()
-		procPostMessageW.Call(a.hwnd, WM_APP_EXPORT, 0, 0)
+		if hwnd := a.getHwnd(); hwnd != 0 && !a.closing.Load() {
+			procPostMessageW.Call(hwnd, WM_APP_EXPORT, 0, 0)
+		}
 	case "download":
-		if a.server != nil {
-			err := a.server.StartDownloadTask(downloadRequest{
+		if srv := a.server; srv != nil {
+			req := downloadRequest{
 				URL:            m.URL,
 				Title:          m.Title,
 				SaveDir:        m.SaveDir,
@@ -688,11 +964,26 @@ func (a *DesktopApp) handleWebMessage(raw string) {
 				JA3:            m.JA3,
 				Akamai:         m.Akamai,
 				Concurrency:    DefaultConcurrency,
-			})
-			if err != nil {
-				b, _ := json.Marshal(map[string]string{"message": err.Error()})
-				a.EmitToWeb("error_event", string(b))
 			}
+			go func() {
+				if a.closing.Load() {
+					return
+				}
+				if err := srv.StartDownloadTask(req); err != nil {
+					if a.closing.Load() {
+						return
+					}
+					payload := map[string]string{
+						"engine":  req.Engine,
+						"message": err.Error(),
+					}
+					if active := srv.ActiveEngine(); active != "" {
+						payload["activeEngine"] = active
+					}
+					b, _ := json.Marshal(payload)
+					a.EmitToWeb("error_event", string(b))
+				}
+			}()
 		}
 	case "stop":
 		if a.server != nil {
@@ -716,10 +1007,10 @@ func RunDesktopWindow(srv *AppServer) error {
 	app := &DesktopApp{
 		server:      srv,
 		browseResCh: make(chan string, 1),
+		closedCh:    make(chan struct{}),
 	}
 	gDesktop = app
-	srv.BrowseFolderFn = app.BrowseFolder
-	srv.NativeEmitFn = app.EmitToWeb
+	srv.SetBrowseFolderFn(app.BrowseFolder)
 
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	hIcon := loadAppIcon(hInstance)
@@ -769,7 +1060,9 @@ func RunDesktopWindow(srv *AppServer) error {
 	if hwnd == 0 {
 		return fmt.Errorf("建立主視窗失敗")
 	}
+	app.evalMu.Lock()
 	app.hwnd = hwnd
+	app.evalMu.Unlock()
 
 	actualDPI := getDPI(hwnd)
 	if actualDPI != dpi {
@@ -782,15 +1075,15 @@ func RunDesktopWindow(srv *AppServer) error {
 	}
 
 	app.applyRoundedCorners(physW, physH, dpi)
-	app.applyGlassBackdrop(srv.config.Blur)
+	app.applyGlassBackdrop()
 
 	// Show and update the native window BEFORE embedding WebView2
 	procShowWindow.Call(hwnd, SW_SHOW)
 	procUpdateWindow.Call(hwnd)
 	procSetFocus.Call(hwnd)
 
-	// Re-apply DWM Acrylic backdrop after window is shown so Windows 11 DWM binds it to the active composition surface
-	app.applyGlassBackdrop(srv.config.Blur)
+	// Re-apply DWM transparent backdrop after window is shown so Windows 11 DWM binds it to the active composition surface
+	app.applyGlassBackdrop()
 
 	// Ensure WebView2 initializes with Alpha=0 transparent background from the very first frame
 	_ = os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000")
@@ -806,27 +1099,48 @@ func RunDesktopWindow(srv *AppServer) error {
 	chromium.SetPermission(edge.CoreWebView2PermissionKindClipboardRead, edge.CoreWebView2PermissionStateAllow)
 	chromium.MessageCallback = app.handleWebMessage
 	chromium.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
+		if app.closing.Load() {
+			return
+		}
 		if ctrl := chromium.GetController(); ctrl != nil {
 			if ctrl2 := ctrl.GetICoreWebView2Controller2(); ctrl2 != nil {
 				_ = ctrl2.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 0, R: 0, G: 0, B: 0})
 			}
 		}
-		app.applyGlassBackdrop(app.blurLevel)
+		app.applyGlassBackdrop()
 		chromium.Resize()
 		_ = chromium.Show()
-		app.pageReady = true
-		app.PushInitState()
 	}
 
+	app.evalMu.Lock()
 	app.chromium = chromium
+	app.evalMu.Unlock()
 
 	if !chromium.Embed(hwnd) {
+		app.closing.Store(true)
+		app.evalMu.Lock()
+		app.chromium = nil
+		app.evalQueue = nil
+		app.evalMu.Unlock()
 		procDestroyWindow.Call(hwnd)
+		app.evalMu.Lock()
 		app.hwnd = 0
-		srv.NativeEmitFn = nil
-		launchBrowserFallback(srv.BaseURL)
+		app.evalMu.Unlock()
+		app.closeOnce.Do(func() {
+			close(app.closedCh)
+		})
+		srv.SetNativeEmitFn(nil)
+		srv.SetBrowseFolderFn(browseFolderStandalone)
+
+		if err := srv.Start(); err != nil {
+			showErrorMessageBox("啟動錯誤", fmt.Sprintf("啟動本機服務失敗: %v", err))
+			return nil
+		}
+		launchBrowserFallback(srv.GetBaseURL())
 		return nil
 	}
+
+	srv.SetNativeEmitFn(app.EmitToWeb)
 
 	// Fully transparent WebView2 background (Alpha = 0) so the real Windows desktop shows through
 	if ctrl := chromium.GetController(); ctrl != nil {
@@ -861,22 +1175,55 @@ func RunDesktopWindow(srv *AppServer) error {
 	return nil
 }
 
+func showFallbackKeepAliveBox(url string) {
+	procMessageBoxW.Call(
+		0,
+		uintptr(unsafe.Pointer(utf16Ptr(fmt.Sprintf("已於預設瀏覽器開啟 AniDownloader：\n%s\n\n點擊「確定」或關閉此提示視窗即可結束本機背景服務。", url)))),
+		uintptr(unsafe.Pointer(utf16Ptr("AniDownloader 瀏覽器模式"))),
+		MB_OK|MB_ICONINFORMATION,
+	)
+}
+
 func launchBrowserFallback(url string) {
-	candidates := []string{
-		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
-		filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
-		filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
-		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+	profileBase := os.Getenv("LOCALAPPDATA")
+	if profileBase == "" {
+		profileBase = os.TempDir()
 	}
+	profileDir := filepath.Join(profileBase, "AniDownloader", "BrowserProfile")
+	_ = os.MkdirAll(profileDir, 0755)
+
+	var candidates []string
+	if pf86 := os.Getenv("ProgramFiles(x86)"); pf86 != "" {
+		candidates = append(candidates,
+			filepath.Join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+			filepath.Join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+		)
+	}
+	if pf := os.Getenv("ProgramFiles"); pf != "" {
+		candidates = append(candidates,
+			filepath.Join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+			filepath.Join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+		)
+	}
+
 	for _, bin := range candidates {
 		if fileExistsNonEmpty(bin) {
-			cmd := exec.Command(bin, fmt.Sprintf("--app=%s", url), "--window-size=880,550")
+			cmd := exec.Command(
+				bin,
+				fmt.Sprintf("--user-data-dir=%s", profileDir),
+				fmt.Sprintf("--app=%s", url),
+				"--window-size=880,550",
+			)
+			startAt := time.Now()
 			if err := cmd.Start(); err == nil {
 				_ = cmd.Wait()
+				if time.Since(startAt) < 2*time.Second {
+					showFallbackKeepAliveBox(url)
+				}
 				return
 			}
 		}
 	}
 	procShellExecuteW.Call(0, uintptr(unsafe.Pointer(utf16Ptr("open"))), uintptr(unsafe.Pointer(utf16Ptr(url))), 0, 0, SW_SHOWNORMAL)
-	select {}
+	showFallbackKeepAliveBox(url)
 }

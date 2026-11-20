@@ -10,7 +10,6 @@
        ========================================================================== */
     :root {
       --glass-alpha: 0.48;
-      --glass-blur: 0px;
       --accent: #0095ff;
       --accent-cyan: #38bdf8;
       --yt-color: #00B4DF;
@@ -106,8 +105,8 @@
         rgba(255, 255, 255, 0.02) 38%,
         rgba(6, 10, 18, 0.22) 100%
       );
-      backdrop-filter: blur(var(--glass-blur)) saturate(165%);
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(165%);
+      backdrop-filter: saturate(165%);
+      -webkit-backdrop-filter: saturate(165%);
       border: 1px solid rgba(255, 255, 255, 0.14);
       box-shadow:
         0 32px 80px rgba(0, 0, 0, 0.68),
@@ -178,10 +177,10 @@
     }
 
     .brand-wrap {
-      margin-left: 6px;
-      margin-bottom: 34px;
+      margin-top: 30px;
+      margin-left: 11px;
+      margin-bottom: 0;
       flex-shrink: 0;
-      transform: translate(5px, 30px);
     }
 
     .brand-logo {
@@ -223,7 +222,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-      transform: translateY(50px);
+      margin-top: 54px;
     }
 
     .nav-item {
@@ -1424,6 +1423,12 @@
         inset 0 -1px 1px rgba(255, 255, 255, 0.06);
     }
 
+    body.desktop-mode .liquid-surface,
+    body.desktop-mode .liquid-well {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
     .status-dot.loading {
       background-color: #fbbf24;
       box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
@@ -1560,7 +1565,7 @@
                   <label class="field-label-bright" id="lblSavedir" for="dirInput">儲存目錄</label>
                 </div>
                 <div class="liquid-well liquid-trackable">
-                  <input type="text" id="dirInput" value="C:\Users\Downloads\Anime" />
+                  <input type="text" id="dirInput" value="C:\Users\Downloads\Anime" oninput="this.title=this.value" />
                   <button class="browse-btn" type="button" id="btnBrowse" onclick="browseDirectory()">選擇</button>
                 </div>
               </div>
@@ -1590,7 +1595,7 @@
               <!-- YT-DLP Card (#00B4DF) -->
               <div class="liquid-surface action-card liquid-trackable" id="cardYtdlp" onclick="triggerDownload('ytdlp')">
                 <div class="card-info">
-                  <div class="card-title" id="titleYtdlp">YT-DLP 多線程下載</div>
+                  <div class="card-title" id="titleYtdlp">YT-DLP 穩定分片下載</div>
                   <div class="card-sub" id="subYtdlp">已啟用防盜鏈標頭 (Origin / Referer)</div>
                 </div>
                 <div class="card-badge yt" aria-hidden="true">
@@ -1768,14 +1773,15 @@
     let currentTab = 'downloader';
     let currentLang = 'zh-TW';
     let currentOpacity = 48;
-    let currentBlur = 0;
     let refererEnabled = true;
     let activeEngine = null;
     let toolsReady = false;
+    let toolsFailed = false;
     let ffmpegVersion = '';
     let ytdlpVersion = '';
     let toastTimer = null;
     let configSaveTimer = null;
+    let doneResetTimer = null;
     let eventSource = null;
 
     /* ==========================================================================
@@ -1791,8 +1797,10 @@
         lblSavedir: '儲存目錄',
         btnBrowse: '選擇',
         lblReferer: '防盜鏈標頭 (Origin / Referer)',
-        titleYtdlp: 'YT-DLP 多線程下載',
+        titleYtdlp: 'YT-DLP 穩定分片下載',
         titleFfmpeg: 'FFMPEG 直接轉錄',
+        statusInitializing: '初始化...',
+        statusError: '錯誤',
         subRefererOn: '已啟用防盜鏈標頭 (Origin / Referer)',
         subRefererOff: '已關閉防盜鏈標頭 (直接連線)',
         subDone: '下載與封裝完成 · 點擊重新執行',
@@ -1804,6 +1812,7 @@
         lblSetUA: 'UA 頭自定義 (User-Agent)',
         lblSetJA3: 'JA3 指紋自定義 (TLS Fingerprint)',
         lblSetAkamai: 'Akamai 指紋自定義 (HTTP/2 Fingerprint)',
+        fpHint: '目前由標準版 yt-dlp 使用 --impersonate chrome，完整自定義 JA3/Akamai 將於原生引擎版本啟用',
         btnResetFingerprint: '恢復預設',
         badgeAntiLeechOn: '防盜鏈：已啟用',
         badgeAntiLeechOff: '防盜鏈：已關閉',
@@ -1842,8 +1851,10 @@
         lblSavedir: '储存目录',
         btnBrowse: '选择',
         lblReferer: '防盗链标头 (Origin / Referer)',
-        titleYtdlp: 'YT-DLP 多线程下载',
+        titleYtdlp: 'YT-DLP 稳定分片下载',
         titleFfmpeg: 'FFMPEG 直接转录',
+        statusInitializing: '初始化...',
+        statusError: '错误',
         subRefererOn: '已启用防盗链标头 (Origin / Referer)',
         subRefererOff: '已关闭防盗链标头 (直接连接)',
         subDone: '下载与封装完成 · 点击重新执行',
@@ -1855,6 +1866,7 @@
         lblSetUA: 'UA 头自定义 (User-Agent)',
         lblSetJA3: 'JA3 指纹自定义 (TLS Fingerprint)',
         lblSetAkamai: 'Akamai 指纹自定义 (HTTP/2 Fingerprint)',
+        fpHint: '当前由标准版 yt-dlp 使用 --impersonate chrome，完整自定义 JA3/Akamai 将于原生引擎版本启用',
         btnResetFingerprint: '恢复默认',
         badgeAntiLeechOn: '防盗链：已启用',
         badgeAntiLeechOff: '防盗链：已关闭',
@@ -1893,8 +1905,10 @@
         lblSavedir: 'Save Directory',
         btnBrowse: 'Browse',
         lblReferer: 'Anti-Leech Header (Origin / Referer)',
-        titleYtdlp: 'YT-DLP Multi-Thread Download',
+        titleYtdlp: 'YT-DLP Segment Download',
         titleFfmpeg: 'FFMPEG Direct Remux',
+        statusInitializing: 'Init...',
+        statusError: 'Error',
         subRefererOn: 'Anti-Leech Header Enabled (Origin / Referer)',
         subRefererOff: 'Anti-Leech Header Disabled (Direct Connection)',
         subDone: 'Completed · Click to Re-run',
@@ -1906,6 +1920,7 @@
         lblSetUA: 'Custom User-Agent (UA Header)',
         lblSetJA3: 'Custom JA3 Fingerprint (TLS)',
         lblSetAkamai: 'Custom Akamai Fingerprint (HTTP/2)',
+        fpHint: 'Standard yt-dlp uses --impersonate chrome; custom JA3/Akamai will activate in the native engine',
         btnResetFingerprint: 'Reset Defaults',
         badgeAntiLeechOn: 'Anti-Leech: ON',
         badgeAntiLeechOff: 'Anti-Leech: OFF',
@@ -1941,34 +1956,69 @@
       return (I18N[currentLang] && I18N[currentLang][key]) || I18N['zh-TW'][key] || key;
     }
 
+    function setInputWithTitle(id, val) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const v = val == null ? '' : String(val);
+      el.value = v;
+      el.title = v;
+    }
+
+    function clearDoneResetTimer() {
+      if (doneResetTimer) {
+        clearTimeout(doneResetTimer);
+        doneResetTimer = null;
+      }
+    }
+
     function sendNative(action, payload) {
       if (IS_DESKTOP && window.chrome && window.chrome.webview) {
         window.chrome.webview.postMessage(JSON.stringify(Object.assign({ action }, payload || {})));
       }
     }
 
+    function buildCurrentConfig() {
+      return {
+        lang: currentLang,
+        opacity: currentOpacity,
+        refererEnabled: refererEnabled,
+        saveDir: document.getElementById('dirInput').value.trim(),
+        userAgent: document.getElementById('uaInput').value.trim(),
+        ja3: document.getElementById('ja3Input').value.trim(),
+        akamai: document.getElementById('akamaiInput').value.trim()
+      };
+    }
+
+    function saveConfigNow() {
+      const cfg = buildCurrentConfig();
+      if (IS_DESKTOP) {
+        sendNative('save_config', { config: cfg });
+      } else {
+        fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Ani-Client': '1'
+          },
+          body: JSON.stringify(cfg),
+          keepalive: true
+        }).catch(() => {});
+      }
+    }
+
+    function flushPendingConfigSave() {
+      if (configSaveTimer) {
+        clearTimeout(configSaveTimer);
+        configSaveTimer = null;
+        saveConfigNow();
+      }
+    }
+
     function scheduleSaveConfig() {
       if (configSaveTimer) clearTimeout(configSaveTimer);
       configSaveTimer = setTimeout(() => {
-        const cfg = {
-          lang: currentLang,
-          opacity: currentOpacity,
-          blur: 0,
-          refererEnabled: refererEnabled,
-          saveDir: document.getElementById('dirInput').value.trim(),
-          userAgent: document.getElementById('uaInput').value.trim(),
-          ja3: document.getElementById('ja3Input').value.trim(),
-          akamai: document.getElementById('akamaiInput').value.trim()
-        };
-        if (IS_DESKTOP) {
-          sendNative('save_config', { config: cfg });
-        } else {
-          fetch('/api/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cfg)
-          }).catch(() => {});
-        }
+        configSaveTimer = null;
+        saveConfigNow();
       }, 250);
     }
 
@@ -2029,8 +2079,15 @@
       document.getElementById('btnClearConsole').textContent = t('btnClearConsole');
       document.getElementById('lblTrayRestore').textContent = t('lblTrayRestore');
 
+      const fpHint = t('fpHint');
+      ['lblSetFingerprint', 'lblSetJA3', 'lblSetAkamai'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.title = fpHint;
+      });
+
       syncFingerprintLinkUI();
       syncEngineSubtitles();
+      renderModuleBadges();
       if (!skipSave) scheduleSaveConfig();
     }
 
@@ -2055,9 +2112,9 @@
     }
 
     function resetFingerprintDefaults() {
-      document.getElementById('uaInput').value = DEFAULT_UA;
-      document.getElementById('ja3Input').value = DEFAULT_JA3;
-      document.getElementById('akamaiInput').value = DEFAULT_AKAMAI;
+      setInputWithTitle('uaInput', DEFAULT_UA);
+      setInputWithTitle('ja3Input', DEFAULT_JA3);
+      setInputWithTitle('akamaiInput', DEFAULT_AKAMAI);
       scheduleSaveConfig();
       showToast(t('toastFingerprintReset'));
     }
@@ -2124,12 +2181,15 @@
       try {
         const res = await fetch('/api/browse', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Ani-Client': '1'
+          },
           body: JSON.stringify({ current: document.getElementById('dirInput').value.trim() })
         });
         const data = await res.json();
         if (data && data.path) {
-          document.getElementById('dirInput').value = data.path;
+          setInputWithTitle('dirInput', data.path);
           showToast(`${t('toastDir')}: ${data.path}`);
           scheduleSaveConfig();
         }
@@ -2144,6 +2204,12 @@
         return;
       }
 
+      // Clicking the active engine while running (not during post-done flash) aborts the current task
+      if (activeEngine === engine && !doneResetTimer) {
+        await stopDownload(true);
+        return;
+      }
+
       const urlVal = document.getElementById('urlInput').value.trim();
       if (!urlVal) {
         showToast(t('toastEmptyUrl'));
@@ -2151,20 +2217,10 @@
         return;
       }
 
-      // Clicking the active engine aborts the current task
-      if (activeEngine === engine) {
-        await stopDownload(true);
-        return;
-      }
-
-      // Switch cleanly if another engine is running
-      if (activeEngine) {
-        await stopDownload(false);
-      }
-
       const titleVal = document.getElementById('titleInput').value.trim();
       const saveDir = document.getElementById('dirInput').value.trim();
 
+      resetEngineUI();
       setEngineRunningUI(engine, t('subPreparing'), 0);
 
       const reqPayload = {
@@ -2188,12 +2244,20 @@
       try {
         const res = await fetch('/api/download', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Ani-Client': '1'
+          },
           body: JSON.stringify(reqPayload)
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
-          resetEngineUI();
+          if (data && (data.activeEngine === 'ytdlp' || data.activeEngine === 'ffmpeg')) {
+            resetEngineUI();
+            setEngineRunningUI(data.activeEngine, t('subDownloading'), 0);
+          } else {
+            resetEngineUI();
+          }
           const errMsg = (data && data.error) || 'Failed to start download';
           writeConsoleLog(t('tagErr'), '#f87171', errMsg);
           showToast(errMsg);
@@ -2208,6 +2272,7 @@
     }
 
     function setEngineRunningUI(engine, subtitleText, pct) {
+      clearDoneResetTimer();
       activeEngine = engine;
       const cardEl = document.getElementById(engine === 'ytdlp' ? 'cardYtdlp' : 'cardFfmpeg');
       const subEl = document.getElementById(engine === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
@@ -2222,6 +2287,7 @@
     }
 
     function resetEngineUI() {
+      clearDoneResetTimer();
       ['cardYtdlp', 'cardFfmpeg'].forEach((id) => document.getElementById(id).classList.remove('running'));
       ['progYtdlp', 'progFfmpeg'].forEach((id) => (document.getElementById(id).style.width = '0%'));
       activeEngine = null;
@@ -2233,7 +2299,10 @@
         sendNative('stop');
       } else {
         try {
-          await fetch('/api/stop', { method: 'POST' });
+          await fetch('/api/stop', {
+            method: 'POST',
+            headers: { 'X-Ani-Client': '1' }
+          });
         } catch (_) {}
       }
       resetEngineUI();
@@ -2245,32 +2314,41 @@
     /* ==========================================================================
        Unified Backend Event Dispatcher (Used by Native WebView2 & Browser SSE)
        ========================================================================== */
-    function updateModuleBadges(ready, ffVer, ytVer, failed) {
-      toolsReady = Boolean(ready);
+    function renderModuleBadges() {
       const dotF = document.getElementById('dotFfmpeg');
       const dotY = document.getElementById('dotYtdlp');
       const lblF = document.getElementById('verFfmpeg');
       const lblY = document.getElementById('verYtdlp');
 
-      if (failed) {
+      if (toolsFailed) {
         dotF.className = 'status-dot error';
         dotY.className = 'status-dot error';
-        lblF.textContent = 'FFMPEG (錯誤)';
-        lblY.textContent = 'YT-DLP (錯誤)';
+        lblF.textContent = `FFMPEG (${t('statusError')})`;
+        lblY.textContent = `YT-DLP (${t('statusError')})`;
         return;
       }
 
-      if (ready) {
-        ffmpegVersion = ffVer || 'v6.1.1';
-        ytdlpVersion = ytVer || 'v2026';
+      if (toolsReady) {
         dotF.className = 'status-dot';
         dotY.className = 'status-dot';
-        lblF.textContent = `FFMPEG (${ffmpegVersion})`;
-        lblY.textContent = `YT-DLP (${ytdlpVersion})`;
+        lblF.textContent = `FFMPEG (${ffmpegVersion || 'OK'})`;
+        lblY.textContent = `YT-DLP (${ytdlpVersion || 'OK'})`;
       } else {
         dotF.className = 'status-dot loading';
         dotY.className = 'status-dot loading';
+        lblF.textContent = `FFMPEG (${t('statusInitializing')})`;
+        lblY.textContent = `YT-DLP (${t('statusInitializing')})`;
       }
+    }
+
+    function updateModuleBadges(ready, ffVer, ytVer, failed) {
+      toolsReady = Boolean(ready);
+      toolsFailed = Boolean(failed);
+      if (ready) {
+        ffmpegVersion = ffVer || '';
+        ytdlpVersion = ytVer || '';
+      }
+      renderModuleBadges();
     }
 
     function handleBackendEvent(eventName, d) {
@@ -2281,17 +2359,23 @@
             if (d.config.lang) switchLanguage(d.config.lang, null, true);
             if (typeof d.config.opacity === 'number') setOpacity(d.config.opacity, true);
             if (typeof d.config.refererEnabled === 'boolean') applyRefererUI(d.config.refererEnabled);
-            if (d.config.saveDir) document.getElementById('dirInput').value = d.config.saveDir;
-            document.getElementById('uaInput').value = d.config.userAgent || DEFAULT_UA;
-            document.getElementById('ja3Input').value = d.config.ja3 || DEFAULT_JA3;
-            document.getElementById('akamaiInput').value = d.config.akamai || DEFAULT_AKAMAI;
+            if (d.config.saveDir) setInputWithTitle('dirInput', d.config.saveDir);
+            setInputWithTitle('uaInput', typeof d.config.userAgent === 'string' ? d.config.userAgent : DEFAULT_UA);
+            setInputWithTitle('ja3Input', typeof d.config.ja3 === 'string' ? d.config.ja3 : DEFAULT_JA3);
+            setInputWithTitle('akamaiInput', typeof d.config.akamai === 'string' ? d.config.akamai : DEFAULT_AKAMAI);
           }
           updateModuleBadges(d.toolsReady, d.ffmpegVersion, d.ytdlpVersion, d.toolsFailed);
           if (Array.isArray(d.logs)) {
-            document.getElementById('consoleOutput').innerHTML = '';
+            document.getElementById('consoleOutput').textContent = '';
             d.logs.forEach((entry) => {
               writeConsoleLog(entry.tag, entry.color, entry.message, entry.ts);
             });
+          }
+          if (d.activeEngine === 'ytdlp' || d.activeEngine === 'ffmpeg') {
+            resetEngineUI();
+            setEngineRunningUI(d.activeEngine, t('subDownloading'), 0);
+          } else {
+            resetEngineUI();
           }
           break;
 
@@ -2301,7 +2385,7 @@
 
         case 'browse_result':
           if (d.path) {
-            document.getElementById('dirInput').value = d.path;
+            setInputWithTitle('dirInput', d.path);
             showToast(`${t('toastDir')}: ${d.path}`);
           }
           break;
@@ -2345,13 +2429,16 @@
         case 'done': {
           const eng = d.engine || activeEngine;
           if (eng) {
+            clearDoneResetTimer();
             const cardEl = document.getElementById(eng === 'ytdlp' ? 'cardYtdlp' : 'cardFfmpeg');
             const subEl = document.getElementById(eng === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
             const progEl = document.getElementById(eng === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
             progEl.style.width = '100%';
             subEl.textContent = t('subDone');
             showToast(t('toastDone'));
-            setTimeout(() => {
+            doneResetTimer = setTimeout(() => {
+              doneResetTimer = null;
+              if (activeEngine !== eng) return;
               cardEl.classList.remove('running');
               progEl.style.width = '0%';
               activeEngine = null;
@@ -2362,11 +2449,18 @@
         }
 
         case 'aborted':
-          resetEngineUI();
+          if (!d.engine || !activeEngine || d.engine === activeEngine) {
+            resetEngineUI();
+          }
           break;
 
         case 'error_event':
-          resetEngineUI();
+          if (d.activeEngine === 'ytdlp' || d.activeEngine === 'ffmpeg') {
+            resetEngineUI();
+            setEngineRunningUI(d.activeEngine, t('subDownloading'), 0);
+          } else if (!d.engine || !activeEngine || d.engine === activeEngine) {
+            resetEngineUI();
+          }
           showToast(d.message || t('toastError'));
           break;
       }
@@ -2406,7 +2500,20 @@
 
       const line = document.createElement('div');
       line.className = 'console-line';
-      line.innerHTML = `<span style="color:#64748b;">[${escapeHtml(ts)}]</span> <span style="color:${tagColor};font-weight:600;">${escapeHtml(tag)}</span> ${escapeHtml(message)}`;
+
+      const tsSpan = document.createElement('span');
+      tsSpan.style.color = '#64748b';
+      tsSpan.textContent = `[${ts}]`;
+
+      const tagSpan = document.createElement('span');
+      tagSpan.style.color = tagColor || '#38bdf8';
+      tagSpan.style.fontWeight = '600';
+      tagSpan.textContent = tag || '';
+
+      line.appendChild(tsSpan);
+      line.appendChild(document.createTextNode(' '));
+      line.appendChild(tagSpan);
+      line.appendChild(document.createTextNode(` ${message || ''}`));
       box.appendChild(line);
 
       while (box.childElementCount > 600) {
@@ -2450,15 +2557,16 @@
     }
 
     function clearConsoleLogs() {
-      document.getElementById('consoleOutput').innerHTML = '';
+      document.getElementById('consoleOutput').textContent = '';
+      if (IS_DESKTOP) {
+        sendNative('clear_logs');
+      } else {
+        fetch('/api/logs/clear', {
+          method: 'POST',
+          headers: { 'X-Ani-Client': '1' }
+        }).catch(() => {});
+      }
       showToast(t('toastConsoleCleared'));
-    }
-
-    function escapeHtml(str) {
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
     }
 
     function showToast(msg) {
@@ -2479,6 +2587,7 @@
     }
 
     function closeWindow() {
+      flushPendingConfigSave();
       if (IS_DESKTOP) {
         sendNative('close');
         return;
@@ -2534,16 +2643,30 @@
        ========================================================================== */
     function initLiquidTracking() {
       document.querySelectorAll('.liquid-trackable').forEach((el) => {
+        let rafId = 0;
+        let lastX = 0;
+        let lastY = 0;
+
         el.addEventListener('mousemove', (e) => {
-          const rect = el.getBoundingClientRect();
-          if (!rect.width || !rect.height) return;
-          const x = ((e.clientX - rect.left) / rect.width) * 100;
-          const y = ((e.clientY - rect.top) / rect.height) * 100;
-          el.style.setProperty('--mx', `${x.toFixed(1)}%`);
-          el.style.setProperty('--my', `${y.toFixed(1)}%`);
+          lastX = e.clientX;
+          lastY = e.clientY;
+          if (rafId) return;
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const x = ((lastX - rect.left) / rect.width) * 100;
+            const y = ((lastY - rect.top) / rect.height) * 100;
+            el.style.setProperty('--mx', `${x.toFixed(1)}%`);
+            el.style.setProperty('--my', `${y.toFixed(1)}%`);
+          });
         });
 
         el.addEventListener('mouseleave', () => {
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = 0;
+          }
           el.style.setProperty('--mx', '50%');
           el.style.setProperty('--my', '0%');
         });
@@ -2614,18 +2737,29 @@
        ========================================================================== */
     async function bootstrap() {
       window.addEventListener('resize', updateStageScale);
+      window.addEventListener('beforeunload', flushPendingConfigSave);
       updateStageScale();
       setOpacity(48, true);
-      document.getElementById('uaInput').value = DEFAULT_UA;
-      document.getElementById('ja3Input').value = DEFAULT_JA3;
-      document.getElementById('akamaiInput').value = DEFAULT_AKAMAI;
+      setInputWithTitle('dirInput', document.getElementById('dirInput').value);
+      setInputWithTitle('uaInput', DEFAULT_UA);
+      setInputWithTitle('ja3Input', DEFAULT_JA3);
+      setInputWithTitle('akamaiInput', DEFAULT_AKAMAI);
+      const fpHint = t('fpHint');
+      ['lblSetFingerprint', 'lblSetJA3', 'lblSetAkamai'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.title = fpHint;
+      });
+      renderModuleBadges();
       syncFingerprintLinkUI();
       updateClock();
       setInterval(updateClock, 1000);
       initLiquidTracking();
       initWindowDragging();
 
-      document.getElementById('dirInput').addEventListener('change', scheduleSaveConfig);
+      document.getElementById('dirInput').addEventListener('change', () => {
+        setInputWithTitle('dirInput', document.getElementById('dirInput').value);
+        scheduleSaveConfig();
+      });
 
       if (IS_DESKTOP) {
         sendNative('init');
@@ -2634,7 +2768,9 @@
 
       connectEventStream();
       try {
-        const res = await fetch('/api/init');
+        const res = await fetch('/api/init', {
+          headers: { 'X-Ani-Client': '1' }
+        });
         const data = await res.json();
         handleBackendEvent('init', data);
       } catch (err) {

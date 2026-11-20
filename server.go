@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -8,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,8 +18,7 @@ import (
 //go:embed assets/index.html
 var embeddedIndexHTML []byte
 
-//go:embed assets/logo.svg
-var embeddedLogoSVG []byte
+var errToolsNotReady = errors.New("內建工具尚未準備就緒，請稍候...")
 
 type LogEntry struct {
 	TS      string `json:"ts"`
@@ -31,64 +33,172 @@ type sseMessage struct {
 }
 
 type AppServer struct {
+	startMu      sync.Mutex
 	mu           sync.Mutex
 	config       AppConfig
 	tools        ToolInfo
 	toolsReady   bool
 	toolsFailed  bool
 	logs         []LogEntry
+	activeTaskID uint64
 	activeCancel context.CancelFunc
 	activeEngine string
+	activeDone   chan struct{}
+	downloadWG   sync.WaitGroup
 
 	sseMu      sync.Mutex
 	sseClients map[chan sseMessage]struct{}
 
-	BrowseFolderFn func() string
-	NativeEmitFn   func(event string, jsonPayload string)
+	browseFolderFn func() string
+	nativeEmitFn   func(event string, jsonPayload string)
+	runDownloadFn  func(context.Context, DownloadOptions, DownloadCallbacks) (string, error)
 
-	listener net.Listener
-	server   *http.Server
-	BaseURL  string
+	listener   net.Listener
+	listenHost string
+	server     *http.Server
+	BaseURL    string
 }
 
 func NewAppServer() *AppServer {
 	return &AppServer{
-		config:     LoadConfig(),
-		sseClients: make(map[chan sseMessage]struct{}),
+		config:        LoadConfig(),
+		sseClients:    make(map[chan sseMessage]struct{}),
+		runDownloadFn: RunDownload,
 	}
 }
 
-func (s *AppServer) Start() error {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
-	s.listener = ln
-	s.BaseURL = fmt.Sprintf("http://%s", ln.Addr().String())
+func (s *AppServer) SetNativeEmitFn(fn func(event string, jsonPayload string)) {
+	s.mu.Lock()
+	s.nativeEmitFn = fn
+	s.mu.Unlock()
+}
 
+func (s *AppServer) SetBrowseFolderFn(fn func() string) {
+	s.mu.Lock()
+	s.browseFolderFn = fn
+	s.mu.Unlock()
+}
+
+func (s *AppServer) GetConfig() AppConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.config
+}
+
+func (s *AppServer) ActiveEngine() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeEngine
+}
+
+func (s *AppServer) GetBaseURL() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.BaseURL
+}
+
+func (s *AppServer) ClearLogs() {
+	s.mu.Lock()
+	s.logs = nil
+	s.mu.Unlock()
+}
+
+func (s *AppServer) isCurrentTask(taskID uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeTaskID == taskID
+}
+
+func (s *AppServer) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/logo.svg", s.handleLogo)
-	mux.HandleFunc("/api/init", s.handleInit)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/browse", s.handleBrowse)
-	mux.HandleFunc("/api/download", s.handleDownload)
-	mux.HandleFunc("/api/stop", s.handleStop)
-	mux.HandleFunc("/api/events", s.handleEvents)
+	mux.HandleFunc("/api/init", s.protectAPI(s.handleInit))
+	mux.HandleFunc("/api/config", s.protectAPI(s.handleConfig))
+	mux.HandleFunc("/api/browse", s.protectAPI(s.handleBrowse))
+	mux.HandleFunc("/api/download", s.protectAPI(s.handleDownload))
+	mux.HandleFunc("/api/stop", s.protectAPI(s.handleStop))
+	mux.HandleFunc("/api/logs/clear", s.protectAPI(s.handleClearLogs))
+	mux.HandleFunc("/api/events", s.protectAPI(s.handleEvents))
+	return mux
+}
 
-	s.server = &http.Server{Handler: mux}
+func (s *AppServer) Start() error {
+	s.mu.Lock()
+	if s.server != nil {
+		s.mu.Unlock()
+		return nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	host := ln.Addr().String()
+	srv := &http.Server{Handler: s.buildHandler()}
+	s.listener = ln
+	s.listenHost = host
+	s.BaseURL = "http://" + host
+	s.server = srv
+	s.mu.Unlock()
+
 	go func() {
-		_ = s.server.Serve(ln)
+		_ = srv.Serve(ln)
 	}()
 	return nil
 }
 
 func (s *AppServer) Shutdown() {
 	s.StopActiveDownload()
-	if s.server != nil {
+
+	waitDone := make(chan struct{})
+	go func() {
+		s.downloadWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(3 * time.Second):
+	}
+
+	s.mu.Lock()
+	srv := s.server
+	s.server = nil
+	s.listener = nil
+	s.listenHost = ""
+	s.mu.Unlock()
+
+	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = s.server.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
+	}
+}
+
+func (s *AppServer) protectAPI(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		allowedHost := s.listenHost
+		baseURL := s.BaseURL
+		s.mu.Unlock()
+
+		if allowedHost != "" && !strings.EqualFold(r.Host, allowedHost) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if origin := r.Header.Get("Origin"); origin != "" && !strings.EqualFold(origin, baseURL) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if r.Header.Get("X-Ani-Client") != "1" {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+
+		next(w, r)
 	}
 }
 
@@ -114,7 +224,6 @@ func (s *AppServer) UpdateConfig(incoming AppConfig) {
 	if incoming.Opacity >= 15 && incoming.Opacity <= 85 {
 		s.config.Opacity = incoming.Opacity
 	}
-	s.config.Blur = 0
 	s.config.RefererEnabled = incoming.RefererEnabled
 	if incoming.SaveDir != "" {
 		s.config.SaveDir = incoming.SaveDir
@@ -191,9 +300,13 @@ func (s *AppServer) Broadcast(event string, payload interface{}) {
 	}
 	dataStr := string(b)
 
-	// Push to native WebView2 bridge if attached
-	if s.NativeEmitFn != nil {
-		s.NativeEmitFn(event, dataStr)
+	s.mu.Lock()
+	emitFn := s.nativeEmitFn
+	s.mu.Unlock()
+
+	// Push to native WebView2 bridge if attached (without holding s.mu)
+	if emitFn != nil {
+		emitFn(event, dataStr)
 	}
 
 	// Push to browser SSE clients if any
@@ -233,69 +346,120 @@ type downloadRequest struct {
 }
 
 func (s *AppServer) StartDownloadTask(req downloadRequest) error {
+	cleanURL, err := validateDownloadURL(req.URL)
+	if err != nil {
+		return err
+	}
+
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+
 	s.mu.Lock()
 	if !s.toolsReady {
 		s.mu.Unlock()
-		return fmt.Errorf("內建工具尚未準備就緒，請稍候...")
+		return errToolsNotReady
 	}
-	if s.activeCancel != nil {
-		s.activeCancel()
+
+	// Cancel and wait for any active or still-exiting download task before launching a new one
+	for s.activeCancel != nil || s.activeDone != nil {
+		s.activeTaskID++
+		oldCancel := s.activeCancel
+		oldDone := s.activeDone
 		s.activeCancel = nil
+		s.activeEngine = ""
+		s.activeDone = nil
+		s.mu.Unlock()
+
+		if oldCancel != nil {
+			oldCancel()
+		}
+		if oldDone != nil {
+			select {
+			case <-oldDone:
+			case <-time.After(3 * time.Second):
+			}
+		}
+
+		s.mu.Lock()
+		if !s.toolsReady {
+			s.mu.Unlock()
+			return errToolsNotReady
+		}
 	}
+
+	s.activeTaskID++
+	myTaskID := s.activeTaskID
+
 	engine := "ytdlp"
 	if req.Engine == "ffmpeg" {
 		engine = "ffmpeg"
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan struct{})
 	s.activeCancel = cancel
 	s.activeEngine = engine
+	s.activeDone = doneCh
 	tools := s.tools
 	cfg := s.config
+	runFn := s.runDownloadFn
+	if runFn == nil {
+		runFn = RunDownload
+	}
+	s.downloadWG.Add(1)
 	s.mu.Unlock()
 
-	ua := req.UserAgent
-	if ua == "" {
-		ua = cfg.UserAgent
-	}
-	ja3 := req.JA3
-	if ja3 == "" {
-		ja3 = cfg.JA3
-	}
-	akamai := req.Akamai
-	if akamai == "" {
-		akamai = cfg.Akamai
+	saveDir := req.SaveDir
+	if strings.TrimSpace(saveDir) == "" {
+		saveDir = cfg.SaveDir
 	}
 
 	opts := DownloadOptions{
-		M3U8Url:        req.URL,
+		M3U8Url:        cleanURL,
 		Title:          req.Title,
-		OutputDir:      req.SaveDir,
+		OutputDir:      saveDir,
 		Engine:         engine,
 		RefererEnabled: req.RefererEnabled,
-		UserAgent:      ua,
-		JA3:            ja3,
-		Akamai:         akamai,
+		UserAgent:      req.UserAgent,
+		JA3:            req.JA3,
+		Akamai:         req.Akamai,
 		Concurrency:    DefaultConcurrency, // Always 1 thread
 		YtDlpPath:      tools.YtDlpPath,
 		FFmpegPath:     tools.FFmpegPath,
 	}
 
 	go func() {
-		outPath, err := RunDownload(ctx, opts, DownloadCallbacks{
+		defer func() {
+			close(doneCh)
+			s.downloadWG.Done()
+		}()
+
+		outPath, err := runFn(ctx, opts, DownloadCallbacks{
 			OnLog: func(tag, color, msg string) {
 				s.AddLog(tag, color, msg)
 			},
 			OnProgress: func(p ProgressUpdate) {
-				s.Broadcast("progress", p)
+				if s.isCurrentTask(myTaskID) {
+					s.Broadcast("progress", p)
+				}
 			},
 		})
 
 		s.mu.Lock()
-		if s.activeEngine == engine {
+		isCurrent := s.activeTaskID == myTaskID
+		if isCurrent {
 			s.activeCancel = nil
 			s.activeEngine = ""
+			if s.activeDone == doneCh {
+				s.activeDone = nil
+			}
+		} else if s.activeDone == doneCh {
+			s.activeDone = nil
 		}
 		s.mu.Unlock()
+
+		if !isCurrent {
+			return
+		}
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -322,13 +486,11 @@ func (s *AppServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(embeddedIndexHTML)
 }
 
-func (s *AppServer) handleLogo(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	_, _ = w.Write(embeddedLogoSVG)
-}
-
 func (s *AppServer) handleInit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	writeJSON(w, http.StatusOK, s.GetInitState())
 }
 
@@ -351,9 +513,13 @@ func (s *AppServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.mu.Lock()
+	browseFn := s.browseFolderFn
+	s.mu.Unlock()
+
 	selected := ""
-	if s.BrowseFolderFn != nil {
-		selected = s.BrowseFolderFn()
+	if browseFn != nil {
+		selected = browseFn()
 	}
 	s.SetSaveDir(selected)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"path": selected})
@@ -366,11 +532,23 @@ func (s *AppServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	var req downloadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"ok":           false,
+			"error":        err.Error(),
+			"activeEngine": s.ActiveEngine(),
+		})
 		return
 	}
 	if err := s.StartDownloadTask(req); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"ok": false, "error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, errToolsNotReady) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, map[string]interface{}{
+			"ok":           false,
+			"error":        err.Error(),
+			"activeEngine": s.ActiveEngine(),
+		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
@@ -385,7 +563,20 @@ func (s *AppServer) handleStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
+func (s *AppServer) handleClearLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.ClearLogs()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
 func (s *AppServer) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)

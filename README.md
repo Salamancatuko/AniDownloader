@@ -16,7 +16,7 @@
 
 3. **全自包含免安裝封裝**
    - 執行檔內已完整嵌入 `ffmpeg.exe` 與 `yt-dlp.exe`。
-   - 下載單一 `AniDownloader_v1.0.0.exe` 雙擊即可直接運行，無需預先配置 Python 或系統 PATH。
+   - 下載單一 `AniDownloader_v1.1.0.exe` 雙擊即可直接運行，無需預先配置 Python 或系統 PATH。
 
 ---
 
@@ -24,8 +24,8 @@
 
 請前往 [**Releases 發布頁**](../../releases/latest) 下載最新打包成品：
 
-* **`AniDownloader_v1.0.0.exe`**：單檔綠色版，雙擊直接運行。
-* **`AniDownloader_v1.0.0_Windows_x64.zip`**：完整便攜包（內含獨立的 `ffmpeg.exe`、`yt-dlp.exe` 與使用說明 `README.txt`）。
+* **`AniDownloader_v1.1.0.exe`**：單檔綠色版，雙擊直接運行。
+* **`AniDownloader_v1.1.0_Windows_x64.zip`**：完整便攜包（內含獨立的 `ffmpeg.exe`、`yt-dlp.exe` 與使用說明 `README.txt`）。
 
 ### 使用步驟
 
@@ -52,7 +52,7 @@ git clone https://github.com/Salamancatuko/AniDownloader.git
 cd AniDownloader
 
 # 2. 生成 Windows 資源圖示 (可選)
-rsrc -manifest manifest.xml -ico app.ico -o rsrc.syso
+rsrc -manifest manifest.xml -ico app.ico -o rsrc_windows_amd64.syso
 
 # 3. 編譯 Windows 64位元無終端視窗 EXE
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H windowsgui -s -w" -o "AniDownloader.exe" .
