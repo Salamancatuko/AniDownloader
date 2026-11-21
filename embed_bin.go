@@ -98,7 +98,7 @@ func EnsureBinaries(logFn func(tag, color, msg string)) (ToolInfo, error) {
 	info.FFmpegVersion = ffVer
 
 	info.YtDlpPath, info.YtDlpVersion = findOptionalYtDlpFn()
-	ytStatus := "未安裝 (可於設定一鍵安裝)"
+	ytStatus := "未安裝，可於設定一鍵安裝"
 	if info.YtDlpPath != "" {
 		if info.YtDlpVersion != "" {
 			ytStatus = info.YtDlpVersion

@@ -1,15 +1,20 @@
-# Compiled executables
+# Compiled executables and embedded staging artifacts
+AniDownloader.exe
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+bin_embed/*.exe
 
 # Release zip archives
 *.zip
 *.tar.gz
 
-# Test and temporary directories
+# Temporary files, backups, and FFmpeg build directories
+*.tmp
+*.bak
+ffmpeg-*/
 tmp/
 scratch/
 test/

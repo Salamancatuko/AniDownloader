@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func makeGzipBytes(t *testing.T, payload []byte) []byte {
@@ -306,5 +309,168 @@ func TestFindOptionalYtDlpAndInstallValidation(t *testing.T) {
 	detectYtDlpVersionFn = func(path string) (string, error) { return "", errors.New("boom") }
 	if p, v := FindOptionalYtDlp(); p != wantManaged || v != "已安裝" {
 		t.Fatalf("FindOptionalYtDlp fallback = (%q, %q), want (%q, 已安裝)", p, v, wantManaged)
+	}
+}
+
+func runEmbeddedFFmpegFlag(t *testing.T, ffPath, flag string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, ffPath, "-hide_banner", flag)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffmpeg %s failed: %v\noutput:\n%s", flag, err, string(out))
+	}
+	return string(out)
+}
+
+func parseFFmpegTrimmedLines(output string) map[string]bool {
+	set := make(map[string]bool)
+	for _, rawLine := range strings.Split(output, "\n") {
+		if trimmed := strings.TrimSpace(rawLine); trimmed != "" {
+			set[trimmed] = true
+		}
+	}
+	return set
+}
+
+func parseFFmpegFormatNames(output string) map[string]bool {
+	set := make(map[string]bool)
+	inTable := false
+	for _, rawLine := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if !inTable {
+			if strings.HasPrefix(trimmed, "--") {
+				inTable = true
+			}
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			continue
+		}
+		for _, name := range strings.Split(fields[1], ",") {
+			if n := strings.TrimSpace(name); n != "" {
+				set[n] = true
+			}
+		}
+	}
+	return set
+}
+
+func TestEmbeddedFFmpegCapabilities(t *testing.T) {
+	ffPath := filepath.Join(t.TempDir(), "ffmpeg.exe")
+	if err := decompressGz(ffmpegGz, ffPath); err != nil {
+		t.Fatalf("decompress embedded ffmpeg.exe failed: %v", err)
+	}
+
+	ver, err := detectFFmpegVersion(ffPath)
+	if err != nil {
+		t.Fatalf("detectFFmpegVersion failed: %v", err)
+	}
+	if ver == "" || !strings.HasPrefix(ver, "v") {
+		t.Fatalf("unexpected ffmpeg version %q, want non-empty v-prefixed string", ver)
+	}
+
+	protocolsOut := runEmbeddedFFmpegFlag(t, ffPath, "-protocols")
+	protocols := parseFFmpegTrimmedLines(protocolsOut)
+	for _, want := range []string{"file", "http", "https", "tls", "crypto"} {
+		if !protocols[want] {
+			t.Errorf("embedded ffmpeg missing required protocol %q\noutput:\n%s", want, protocolsOut)
+		}
+	}
+
+	demuxersOut := runEmbeddedFFmpegFlag(t, ffPath, "-demuxers")
+	demuxers := parseFFmpegFormatNames(demuxersOut)
+	for _, want := range []string{"hls", "mpegts", "mov", "matroska", "concat"} {
+		if !demuxers[want] {
+			t.Errorf("embedded ffmpeg missing required demuxer %q\noutput:\n%s", want, demuxersOut)
+		}
+	}
+
+	muxersOut := runEmbeddedFFmpegFlag(t, ffPath, "-muxers")
+	muxers := parseFFmpegFormatNames(muxersOut)
+	for _, want := range []string{"mp4", "matroska"} {
+		if !muxers[want] {
+			t.Errorf("embedded ffmpeg missing required muxer %q\noutput:\n%s", want, muxersOut)
+		}
+	}
+
+	bsfsOut := runEmbeddedFFmpegFlag(t, ffPath, "-bsfs")
+	bsfs := parseFFmpegTrimmedLines(bsfsOut)
+	if !bsfs["aac_adtstoasc"] {
+		t.Errorf("embedded ffmpeg missing required bitstream filter %q\noutput:\n%s", "aac_adtstoasc", bsfsOut)
+	}
+
+	decodersOut := runEmbeddedFFmpegFlag(t, ffPath, "-decoders")
+	decoders := parseFFmpegFormatNames(decodersOut)
+	for _, want := range []string{"h264", "aac", "aac_latm"} {
+		if !decoders[want] {
+			t.Errorf("embedded ffmpeg missing required decoder %q\noutput:\n%s", want, decodersOut)
+		}
+	}
+}
+
+func TestEnsureBinariesReadyLogFormat(t *testing.T) {
+	origFindFn := findOptionalYtDlpFn
+	defer func() {
+		findOptionalYtDlpFn = origFindFn
+	}()
+
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	// Case A: yt-dlp absent -> single-parenthesis message without nested "((" or "))"
+	findOptionalYtDlpFn = func() (string, string) { return "", "" }
+	var logsAbsent []string
+	infoAbsent, err := EnsureBinaries(func(tag, _, msg string) {
+		logsAbsent = append(logsAbsent, tag+" "+msg)
+	})
+	if err != nil {
+		t.Fatalf("EnsureBinaries (absent yt-dlp) failed: %v", err)
+	}
+	if infoAbsent.YtDlpPath != "" || infoAbsent.YtDlpVersion != "" {
+		t.Fatalf("expected empty yt-dlp info, got %+v", infoAbsent)
+	}
+	var foundAbsentReady bool
+	for _, entry := range logsAbsent {
+		if strings.Contains(entry, "內建模組就緒：") {
+			foundAbsentReady = true
+			if !strings.Contains(entry, "YT-DLP (未安裝，可於設定一鍵安裝)") {
+				t.Fatalf("unexpected absent yt-dlp ready log: %q", entry)
+			}
+			if strings.Contains(entry, "))") {
+				t.Fatalf("ready log must not contain nested parentheses '))': %q", entry)
+			}
+		}
+	}
+	if !foundAbsentReady {
+		t.Fatalf("expected ready log entry, got %v", logsAbsent)
+	}
+
+	// Case B: yt-dlp installed -> shows version
+	findOptionalYtDlpFn = func() (string, string) { return `C:\tools\yt-dlp.exe`, "v2026.10.26" }
+	var logsInstalled []string
+	infoInstalled, err := EnsureBinaries(func(tag, _, msg string) {
+		logsInstalled = append(logsInstalled, tag+" "+msg)
+	})
+	if err != nil {
+		t.Fatalf("EnsureBinaries (installed yt-dlp) failed: %v", err)
+	}
+	if infoInstalled.YtDlpVersion != "v2026.10.26" {
+		t.Fatalf("unexpected yt-dlp version: %+v", infoInstalled)
+	}
+	var foundInstalledReady bool
+	for _, entry := range logsInstalled {
+		if strings.Contains(entry, "內建模組就緒：") {
+			foundInstalledReady = true
+			if !strings.Contains(entry, "YT-DLP (v2026.10.26)") {
+				t.Fatalf("unexpected installed yt-dlp ready log: %q", entry)
+			}
+		}
+	}
+	if !foundInstalledReady {
+		t.Fatalf("expected ready log entry, got %v", logsInstalled)
 	}
 }
