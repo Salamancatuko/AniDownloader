@@ -12,7 +12,7 @@
       --glass-alpha: 0.48;
       --accent: #0095ff;
       --accent-cyan: #38bdf8;
-      --yt-color: #00B4DF;
+      --hls-color: #00B4DF;
       --ff-color: #F4962E;
       --switch-yellow: #FFFF00;
       --green-dot: #10b981;
@@ -401,7 +401,7 @@
     }
 
     #tab-settings {
-      gap: 16px;
+      gap: 10px;
     }
 
     #tab-console {
@@ -749,6 +749,11 @@
       color: var(--text-bright);
     }
 
+    .mini-inline-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
     .field-grid-2 {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -942,8 +947,8 @@
       cursor: pointer;
     }
 
-    /* YT-DLP Card (#00B4DF Cyan-Blue Accent) */
-    #cardYtdlp {
+    /* Native HLS Card (#00B4DF Cyan-Blue Accent) */
+    #cardHls {
       background:
         radial-gradient(
           200px circle at var(--mx) var(--my),
@@ -959,7 +964,7 @@
         );
     }
 
-    #cardYtdlp:hover {
+    #cardHls:hover {
       transform: translateY(-1px);
       border-color: rgba(0, 180, 223, 0.72);
       box-shadow:
@@ -967,8 +972,8 @@
         inset 0 1px 1px rgba(255, 255, 255, 0.42);
     }
 
-    #cardYtdlp.running {
-      border-color: var(--yt-color);
+    #cardHls.running {
+      border-color: var(--hls-color);
       box-shadow:
         0 10px 28px rgba(0, 180, 223, 0.42),
         inset 0 1px 1px rgba(255, 255, 255, 0.48);
@@ -1080,7 +1085,7 @@
       }
     }
 
-    .card-badge.yt {
+    .card-badge.hls {
       background: linear-gradient(145deg, #33D1F5 0%, #00B4DF 52%, #0089AB 100%);
       box-shadow:
         0 4px 14px rgba(0, 180, 223, 0.48),
@@ -1115,7 +1120,7 @@
       z-index: 3;
     }
 
-    #progYtdlp {
+    #progHls {
       background: linear-gradient(90deg, #00B4DF, #5CE0FF);
       box-shadow: 0 0 10px rgba(0, 180, 223, 0.85);
     }
@@ -1130,11 +1135,11 @@
        ========================================================================== */
     .settings-box {
       width: 100%;
-      padding: 15px 16px;
+      padding: 11px 14px;
       border-radius: 12px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
     }
 
     .settings-box-header {
@@ -1193,14 +1198,31 @@
     }
 
     .settings-box.settings-fp-box {
-      padding: 13px 16px;
-      gap: 10px;
+      padding: 11px 14px;
+      gap: 8px;
     }
 
     .settings-header-actions {
+      position: relative;
+      z-index: 2;
       display: flex;
       align-items: center;
       gap: 8px;
+    }
+
+    .settings-ytdlp-bar {
+      height: 42px;
+      padding: 0 14px;
+      border-radius: 11px;
+    }
+
+    .settings-ytdlp-left {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
     }
 
     .settings-link-badge {
@@ -1212,6 +1234,7 @@
       background: rgba(0, 149, 255, 0.16);
       color: var(--accent-cyan);
       transition: all 0.16s ease;
+      white-space: nowrap;
     }
 
     .settings-link-badge.is-off {
@@ -1225,7 +1248,7 @@
       z-index: 2;
       display: flex;
       flex-direction: column;
-      gap: 9px;
+      gap: 7px;
       transition: opacity 0.18s ease;
     }
 
@@ -1490,12 +1513,12 @@
         <!-- Bundled Core Module Status -->
         <div class="version-list">
           <div class="version-item">
-            <span class="status-dot loading" id="dotFfmpeg"></span>
-            <span id="verFfmpeg">FFMPEG (初始化...)</span>
+            <span class="status-dot" id="dotCore"></span>
+            <span id="verCore">HLS-CORE (v2.0.0)</span>
           </div>
           <div class="version-item">
-            <span class="status-dot loading" id="dotYtdlp"></span>
-            <span id="verYtdlp">YT-DLP (初始化...)</span>
+            <span class="status-dot loading" id="dotFfmpeg"></span>
+            <span id="verFfmpeg">FFMPEG (初始化...)</span>
           </div>
         </div>
       </aside>
@@ -1565,7 +1588,7 @@
                   <label class="field-label-bright" id="lblSavedir" for="dirInput">儲存目錄</label>
                 </div>
                 <div class="liquid-well liquid-trackable">
-                  <input type="text" id="dirInput" value="C:\Users\Downloads\Anime" oninput="this.title=this.value" />
+                  <input type="text" id="dirInput" value="" placeholder="C:\Users\...\Downloads" oninput="this.title=this.value" />
                   <button class="browse-btn" type="button" id="btnBrowse" onclick="browseDirectory()">選擇</button>
                 </div>
               </div>
@@ -1592,13 +1615,13 @@
 
             <!-- 4. Download Action Cards Stack -->
             <div class="action-cards-stack">
-              <!-- YT-DLP Card (#00B4DF) -->
-              <div class="liquid-surface action-card liquid-trackable" id="cardYtdlp" onclick="triggerDownload('ytdlp')">
+              <!-- Native HLS Card (#00B4DF) -->
+              <div class="liquid-surface action-card liquid-trackable" id="cardHls" onclick="triggerDownload('hls')">
                 <div class="card-info">
-                  <div class="card-title" id="titleYtdlp">YT-DLP 穩定分片下載</div>
-                  <div class="card-sub" id="subYtdlp">已啟用防盜鏈標頭 (Origin / Referer)</div>
+                  <div class="card-title" id="titleHls">原生 HLS 指紋下載</div>
+                  <div class="card-sub" id="subHls">已啟用防盜鏈標頭 (Origin / Referer)</div>
                 </div>
-                <div class="card-badge yt" aria-hidden="true">
+                <div class="card-badge hls" aria-hidden="true">
                   <!-- Cute Cat-Ear Cloud Download SVG (Explicit 22x22 dimensions) -->
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                     <path
@@ -1619,7 +1642,7 @@
                     />
                   </svg>
                 </div>
-                <div class="card-progress-bar" id="progYtdlp"></div>
+                <div class="card-progress-bar" id="progHls"></div>
               </div>
 
               <!-- FFMPEG Card (#F4962E) -->
@@ -1705,7 +1728,7 @@
                       id="ja3Input"
                       spellcheck="false"
                       autocomplete="off"
-                      placeholder="771,4865-4866-..."
+                      placeholder="留空使用內建 Chrome TLS 指紋（進階自定義才填寫）"
                       oninput="this.title=this.value;scheduleSaveConfig()"
                     />
                   </div>
@@ -1723,6 +1746,17 @@
                     />
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <!-- Card 3: Optional External YT-DLP Webpage Extension -->
+            <div class="liquid-surface toggle-bar settings-ytdlp-bar liquid-trackable">
+              <div class="settings-ytdlp-left">
+                <span class="field-label-bright" id="lblSetYtDlp">外部網頁引擎 (YT-DLP)</span>
+                <span class="settings-link-badge is-off" id="ytdlpStatusBadge">未安裝</span>
+              </div>
+              <div class="settings-header-actions">
+                <button class="mini-inline-btn" type="button" id="btnYtDlpAction" onclick="triggerYtDlpUpdate()">下載安裝</button>
               </div>
             </div>
           </section>
@@ -1745,7 +1779,7 @@
 
         <!-- Bottom Footer Bar -->
         <footer class="main-footer">
-          <div class="clock-text" id="liveClock">2026/11/19  09:33:00</div>
+          <div class="clock-text" id="liveClock">--/--/--  --:--:--</div>
         </footer>
       </main>
 
@@ -1767,7 +1801,7 @@
     }
 
     const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-    const DEFAULT_JA3 = '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0';
+    const DEFAULT_JA3 = '';
     const DEFAULT_AKAMAI = '1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p';
 
     let currentTab = 'downloader';
@@ -1778,7 +1812,10 @@
     let toolsReady = false;
     let toolsFailed = false;
     let ffmpegVersion = '';
+    let coreVersion = 'v2.0.0';
+    let ytdlpInstalled = false;
     let ytdlpVersion = '';
+    let ytdlpUpdating = false;
     let toastTimer = null;
     let configSaveTimer = null;
     let doneResetTimer = null;
@@ -1797,7 +1834,7 @@
         lblSavedir: '儲存目錄',
         btnBrowse: '選擇',
         lblReferer: '防盜鏈標頭 (Origin / Referer)',
-        titleYtdlp: 'YT-DLP 穩定分片下載',
+        titleHls: '原生 HLS 指紋下載',
         titleFfmpeg: 'FFMPEG 直接轉錄',
         statusInitializing: '初始化...',
         statusError: '錯誤',
@@ -1811,12 +1848,20 @@
         lblSetFingerprint: '防盜鏈指紋與 UA 設定',
         lblSetUA: 'UA 頭自定義 (User-Agent)',
         lblSetJA3: 'JA3 指紋自定義 (TLS Fingerprint)',
+        placeholderJA3: '留空使用內建 Chrome TLS 指紋（進階自定義才填寫）',
         lblSetAkamai: 'Akamai 指紋自定義 (HTTP/2 Fingerprint)',
-        fpHint: '目前由標準版 yt-dlp 使用 --impersonate chrome，完整自定義 JA3/Akamai 將於原生引擎版本啟用',
+        lblSetYtDlp: '外部網頁引擎 (YT-DLP)',
+        ytdlpStatusNone: '未安裝',
+        ytdlpStatusUpdating: '下載更新中...',
+        ytdlpBtnInstall: '下載安裝',
+        ytdlpBtnUpdate: '檢查更新',
+        toastYtDlpUpdating: '正在背景安裝或更新 yt-dlp.exe，詳細進度請見 Console',
+        toastYtDlpDone: '外部 YT-DLP 就緒',
+        toastYtDlpFail: '外部 YT-DLP 安裝/更新失敗',
         btnResetFingerprint: '恢復預設',
         badgeAntiLeechOn: '防盜鏈：已啟用',
         badgeAntiLeechOff: '防盜鏈：已關閉',
-        toastFingerprintReset: '已恢復為 yt-dlp 預設 UA / JA3 / Akamai 指紋',
+        toastFingerprintReset: '已恢復為預設 UA / JA3 / Akamai 指紋',
         lblConsoleHeader: '核心執行日誌 (STDOUT / STDERR)',
         btnExportConsole: '導出日誌',
         btnClearConsole: '清空日誌',
@@ -1851,7 +1896,7 @@
         lblSavedir: '储存目录',
         btnBrowse: '选择',
         lblReferer: '防盗链标头 (Origin / Referer)',
-        titleYtdlp: 'YT-DLP 稳定分片下载',
+        titleHls: '原生 HLS 指纹下载',
         titleFfmpeg: 'FFMPEG 直接转录',
         statusInitializing: '初始化...',
         statusError: '错误',
@@ -1865,12 +1910,20 @@
         lblSetFingerprint: '防盗链指纹与 UA 设置',
         lblSetUA: 'UA 头自定义 (User-Agent)',
         lblSetJA3: 'JA3 指纹自定义 (TLS Fingerprint)',
+        placeholderJA3: '留空使用内置 Chrome TLS 指纹（进阶自定义才填写）',
         lblSetAkamai: 'Akamai 指纹自定义 (HTTP/2 Fingerprint)',
-        fpHint: '当前由标准版 yt-dlp 使用 --impersonate chrome，完整自定义 JA3/Akamai 将于原生引擎版本启用',
+        lblSetYtDlp: '外部网页引擎 (YT-DLP)',
+        ytdlpStatusNone: '未安装',
+        ytdlpStatusUpdating: '下载更新中...',
+        ytdlpBtnInstall: '下载安装',
+        ytdlpBtnUpdate: '检查更新',
+        toastYtDlpUpdating: '正在后台安装或更新 yt-dlp.exe，详细进度请见 Console',
+        toastYtDlpDone: '外部 YT-DLP 就绪',
+        toastYtDlpFail: '外部 YT-DLP 安装/更新失败',
         btnResetFingerprint: '恢复默认',
         badgeAntiLeechOn: '防盗链：已启用',
         badgeAntiLeechOff: '防盗链：已关闭',
-        toastFingerprintReset: '已恢复为 yt-dlp 默认 UA / JA3 / Akamai 指纹',
+        toastFingerprintReset: '已恢复为默认 UA / JA3 / Akamai 指纹',
         lblConsoleHeader: '核心执行日志 (STDOUT / STDERR)',
         btnExportConsole: '导出日志',
         btnClearConsole: '清空日志',
@@ -1905,7 +1958,7 @@
         lblSavedir: 'Save Directory',
         btnBrowse: 'Browse',
         lblReferer: 'Anti-Leech Header (Origin / Referer)',
-        titleYtdlp: 'YT-DLP Segment Download',
+        titleHls: 'Native HLS Fingerprint Download',
         titleFfmpeg: 'FFMPEG Direct Remux',
         statusInitializing: 'Init...',
         statusError: 'Error',
@@ -1919,12 +1972,20 @@
         lblSetFingerprint: 'Anti-Leech Fingerprint & UA',
         lblSetUA: 'Custom User-Agent (UA Header)',
         lblSetJA3: 'Custom JA3 Fingerprint (TLS)',
+        placeholderJA3: 'Leave blank for built-in Chrome TLS fingerprint (advanced)',
         lblSetAkamai: 'Custom Akamai Fingerprint (HTTP/2)',
-        fpHint: 'Standard yt-dlp uses --impersonate chrome; custom JA3/Akamai will activate in the native engine',
+        lblSetYtDlp: 'External Webpage Engine (YT-DLP)',
+        ytdlpStatusNone: 'Not Installed',
+        ytdlpStatusUpdating: 'Updating...',
+        ytdlpBtnInstall: 'Install',
+        ytdlpBtnUpdate: 'Check Update',
+        toastYtDlpUpdating: 'Installing or updating yt-dlp.exe in background...',
+        toastYtDlpDone: 'External YT-DLP ready',
+        toastYtDlpFail: 'Failed to install/update YT-DLP',
         btnResetFingerprint: 'Reset Defaults',
         badgeAntiLeechOn: 'Anti-Leech: ON',
         badgeAntiLeechOff: 'Anti-Leech: OFF',
-        toastFingerprintReset: 'Reset UA / JA3 / Akamai to yt-dlp defaults',
+        toastFingerprintReset: 'Reset UA / JA3 / Akamai to defaults',
         lblConsoleHeader: 'Core Execution Log (STDOUT / STDERR)',
         btnExportConsole: 'Export Log',
         btnClearConsole: 'Clear Log',
@@ -2066,24 +2127,20 @@
       document.getElementById('lblSavedir').textContent = t('lblSavedir');
       document.getElementById('btnBrowse').textContent = t('btnBrowse');
       document.getElementById('lblReferer').textContent = t('lblReferer');
-      document.getElementById('titleYtdlp').textContent = t('titleYtdlp');
+      document.getElementById('titleHls').textContent = t('titleHls');
       document.getElementById('titleFfmpeg').textContent = t('titleFfmpeg');
       document.getElementById('lblSetLang').textContent = t('lblSetLang');
       document.getElementById('lblSetFingerprint').textContent = t('lblSetFingerprint');
       document.getElementById('lblSetUA').textContent = t('lblSetUA');
       document.getElementById('lblSetJA3').textContent = t('lblSetJA3');
+      document.getElementById('ja3Input').placeholder = t('placeholderJA3');
       document.getElementById('lblSetAkamai').textContent = t('lblSetAkamai');
+      document.getElementById('lblSetYtDlp').textContent = t('lblSetYtDlp');
       document.getElementById('btnResetFingerprint').textContent = t('btnResetFingerprint');
       document.getElementById('lblConsoleHeader').textContent = t('lblConsoleHeader');
       document.getElementById('btnExportConsole').textContent = t('btnExportConsole');
       document.getElementById('btnClearConsole').textContent = t('btnClearConsole');
       document.getElementById('lblTrayRestore').textContent = t('lblTrayRestore');
-
-      const fpHint = t('fpHint');
-      ['lblSetFingerprint', 'lblSetJA3', 'lblSetAkamai'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.title = fpHint;
-      });
 
       syncFingerprintLinkUI();
       syncEngineSubtitles();
@@ -2091,10 +2148,37 @@
       if (!skipSave) scheduleSaveConfig();
     }
 
+    function normalizeEngine(eng) {
+      return eng === 'ffmpeg' ? 'ffmpeg' : 'hls';
+    }
+
+    function normalizeOptionalEngine(eng) {
+      if (!eng) return '';
+      return eng === 'ffmpeg' ? 'ffmpeg' : 'hls';
+    }
+
+    function getEngineElements(engine) {
+      const eng = normalizeEngine(engine);
+      if (eng === 'ffmpeg') {
+        return {
+          engine: 'ffmpeg',
+          card: document.getElementById('cardFfmpeg'),
+          sub: document.getElementById('subFfmpeg'),
+          prog: document.getElementById('progFfmpeg')
+        };
+      }
+      return {
+        engine: 'hls',
+        card: document.getElementById('cardHls'),
+        sub: document.getElementById('subHls'),
+        prog: document.getElementById('progHls')
+      };
+    }
+
     function syncEngineSubtitles() {
       const baseSub = refererEnabled ? t('subRefererOn') : t('subRefererOff');
-      if (activeEngine !== 'ytdlp') {
-        document.getElementById('subYtdlp').textContent = baseSub;
+      if (activeEngine !== 'hls') {
+        document.getElementById('subHls').textContent = baseSub;
       }
       if (activeEngine !== 'ffmpeg') {
         document.getElementById('subFfmpeg').textContent = baseSub;
@@ -2204,8 +2288,10 @@
         return;
       }
 
+      const targetEng = normalizeEngine(engine);
+
       // Clicking the active engine while running (not during post-done flash) aborts the current task
-      if (activeEngine === engine && !doneResetTimer) {
+      if (activeEngine === targetEng && !doneResetTimer) {
         await stopDownload(true);
         return;
       }
@@ -2221,13 +2307,13 @@
       const saveDir = document.getElementById('dirInput').value.trim();
 
       resetEngineUI();
-      setEngineRunningUI(engine, t('subPreparing'), 0);
+      setEngineRunningUI(targetEng, t('subPreparing'), 0);
 
       const reqPayload = {
         url: urlVal,
         title: titleVal,
         saveDir: saveDir,
-        engine: engine,
+        engine: targetEng,
         refererEnabled: refererEnabled,
         userAgent: document.getElementById('uaInput').value.trim(),
         ja3: document.getElementById('ja3Input').value.trim(),
@@ -2252,9 +2338,10 @@
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
-          if (data && (data.activeEngine === 'ytdlp' || data.activeEngine === 'ffmpeg')) {
+          const runningEng = normalizeOptionalEngine(data && data.activeEngine);
+          if (runningEng) {
             resetEngineUI();
-            setEngineRunningUI(data.activeEngine, t('subDownloading'), 0);
+            setEngineRunningUI(runningEng, t('subDownloading'), 0);
           } else {
             resetEngineUI();
           }
@@ -2273,23 +2360,21 @@
 
     function setEngineRunningUI(engine, subtitleText, pct) {
       clearDoneResetTimer();
-      activeEngine = engine;
-      const cardEl = document.getElementById(engine === 'ytdlp' ? 'cardYtdlp' : 'cardFfmpeg');
-      const subEl = document.getElementById(engine === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
-      const progEl = document.getElementById(engine === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
-      cardEl.classList.add('running');
+      const els = getEngineElements(engine);
+      activeEngine = els.engine;
+      els.card.classList.add('running');
       if (typeof pct === 'number') {
-        progEl.style.width = `${Math.max(0, Math.min(100, pct)).toFixed(1)}%`;
+        els.prog.style.width = `${Math.max(0, Math.min(100, pct)).toFixed(1)}%`;
       }
       if (subtitleText) {
-        subEl.textContent = subtitleText;
+        els.sub.textContent = subtitleText;
       }
     }
 
     function resetEngineUI() {
       clearDoneResetTimer();
-      ['cardYtdlp', 'cardFfmpeg'].forEach((id) => document.getElementById(id).classList.remove('running'));
-      ['progYtdlp', 'progFfmpeg'].forEach((id) => (document.getElementById(id).style.width = '0%'));
+      ['cardHls', 'cardFfmpeg'].forEach((id) => document.getElementById(id).classList.remove('running'));
+      ['progHls', 'progFfmpeg'].forEach((id) => (document.getElementById(id).style.width = '0%'));
       activeEngine = null;
       syncEngineSubtitles();
     }
@@ -2315,38 +2400,95 @@
        Unified Backend Event Dispatcher (Used by Native WebView2 & Browser SSE)
        ========================================================================== */
     function renderModuleBadges() {
+      const dotC = document.getElementById('dotCore');
       const dotF = document.getElementById('dotFfmpeg');
-      const dotY = document.getElementById('dotYtdlp');
+      const lblC = document.getElementById('verCore');
       const lblF = document.getElementById('verFfmpeg');
-      const lblY = document.getElementById('verYtdlp');
 
       if (toolsFailed) {
+        dotC.className = 'status-dot error';
         dotF.className = 'status-dot error';
-        dotY.className = 'status-dot error';
+        lblC.textContent = `HLS-CORE (${t('statusError')})`;
         lblF.textContent = `FFMPEG (${t('statusError')})`;
-        lblY.textContent = `YT-DLP (${t('statusError')})`;
         return;
       }
 
+      dotC.className = 'status-dot';
+      lblC.textContent = `HLS-CORE (${coreVersion || 'v2.0.0'})`;
+
       if (toolsReady) {
         dotF.className = 'status-dot';
-        dotY.className = 'status-dot';
         lblF.textContent = `FFMPEG (${ffmpegVersion || 'OK'})`;
-        lblY.textContent = `YT-DLP (${ytdlpVersion || 'OK'})`;
       } else {
         dotF.className = 'status-dot loading';
-        dotY.className = 'status-dot loading';
         lblF.textContent = `FFMPEG (${t('statusInitializing')})`;
-        lblY.textContent = `YT-DLP (${t('statusInitializing')})`;
+      }
+      renderYtDlpStatusUI();
+    }
+
+    function renderYtDlpStatusUI() {
+      const badge = document.getElementById('ytdlpStatusBadge');
+      const btn = document.getElementById('btnYtDlpAction');
+      if (!badge || !btn) return;
+      if (ytdlpUpdating) {
+        badge.className = 'settings-link-badge';
+        badge.textContent = t('ytdlpStatusUpdating');
+        btn.disabled = true;
+        btn.textContent = t('ytdlpStatusUpdating');
+        return;
+      }
+      btn.disabled = false;
+      if (ytdlpInstalled) {
+        badge.className = 'settings-link-badge';
+        const verText = ytdlpVersion ? (ytdlpVersion.startsWith('v') ? ytdlpVersion : `v${ytdlpVersion}`) : 'OK';
+        badge.textContent = verText;
+        btn.textContent = t('ytdlpBtnUpdate');
+      } else {
+        badge.className = 'settings-link-badge is-off';
+        badge.textContent = t('ytdlpStatusNone');
+        btn.textContent = t('ytdlpBtnInstall');
       }
     }
 
-    function updateModuleBadges(ready, ffVer, ytVer, failed) {
+    async function triggerYtDlpUpdate() {
+      if (ytdlpUpdating) return;
+      ytdlpUpdating = true;
+      renderYtDlpStatusUI();
+      showToast(t('toastYtDlpUpdating'));
+      if (IS_DESKTOP) {
+        sendNative('update_ytdlp');
+        return;
+      }
+      try {
+        const res = await fetch('/api/ytdlp/update', {
+          method: 'POST',
+          headers: { 'X-Ani-Client': '1' }
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          ytdlpUpdating = false;
+          renderYtDlpStatusUI();
+          showToast(`${t('toastYtDlpFail')}: ${data.error || res.statusText}`);
+        }
+      } catch (err) {
+        ytdlpUpdating = false;
+        renderYtDlpStatusUI();
+        showToast(`${t('toastYtDlpFail')}: ${err.message || err}`);
+      }
+    }
+
+    function updateModuleBadges(ready, ffVer, coreVer, failed, ytInstalled, ytVer) {
       toolsReady = Boolean(ready);
       toolsFailed = Boolean(failed);
+      coreVersion = coreVer || coreVersion || 'v2.0.0';
       if (ready) {
         ffmpegVersion = ffVer || '';
-        ytdlpVersion = ytVer || '';
+      }
+      if (typeof ytInstalled === 'boolean') {
+        ytdlpInstalled = ytInstalled;
+      }
+      if (typeof ytVer === 'string') {
+        ytdlpVersion = ytVer;
       }
       renderModuleBadges();
     }
@@ -2354,7 +2496,7 @@
     function handleBackendEvent(eventName, d) {
       if (!d) d = {};
       switch (eventName) {
-        case 'init':
+        case 'init': {
           if (d.config) {
             if (d.config.lang) switchLanguage(d.config.lang, null, true);
             if (typeof d.config.opacity === 'number') setOpacity(d.config.opacity, true);
@@ -2364,23 +2506,55 @@
             setInputWithTitle('ja3Input', typeof d.config.ja3 === 'string' ? d.config.ja3 : DEFAULT_JA3);
             setInputWithTitle('akamaiInput', typeof d.config.akamai === 'string' ? d.config.akamai : DEFAULT_AKAMAI);
           }
-          updateModuleBadges(d.toolsReady, d.ffmpegVersion, d.ytdlpVersion, d.toolsFailed);
+          updateModuleBadges(
+            d.toolsReady,
+            d.ffmpegVersion,
+            d.coreVersion || 'v2.0.0',
+            d.toolsFailed,
+            Boolean(d.ytdlpInstalled),
+            d.ytdlpVersion || ''
+          );
           if (Array.isArray(d.logs)) {
             document.getElementById('consoleOutput').textContent = '';
             d.logs.forEach((entry) => {
               writeConsoleLog(entry.tag, entry.color, entry.message, entry.ts);
             });
           }
-          if (d.activeEngine === 'ytdlp' || d.activeEngine === 'ffmpeg') {
+          const restoredEng = normalizeOptionalEngine(d.activeEngine);
+          if (restoredEng) {
             resetEngineUI();
-            setEngineRunningUI(d.activeEngine, t('subDownloading'), 0);
+            setEngineRunningUI(restoredEng, t('subDownloading'), 0);
           } else {
             resetEngineUI();
           }
           break;
+        }
 
         case 'ready':
-          updateModuleBadges(d.ready, d.ffmpegVersion, d.ytdlpVersion, d.failed);
+          updateModuleBadges(
+            d.ready,
+            d.ffmpegVersion,
+            d.coreVersion || 'v2.0.0',
+            d.failed,
+            d.ytdlpInstalled,
+            d.ytdlpVersion
+          );
+          break;
+
+        case 'ytdlp_update_result':
+          ytdlpUpdating = false;
+          if (typeof d.installed === 'boolean') {
+            ytdlpInstalled = d.installed;
+          }
+          if (typeof d.version === 'string') {
+            ytdlpVersion = d.version;
+          }
+          renderYtDlpStatusUI();
+          if (d.ok) {
+            showToast(`${t('toastYtDlpDone')}: ${ytdlpVersion || 'OK'}`);
+          } else if (d.error) {
+            showToast(`${t('toastYtDlpFail')}: ${d.error}`);
+          }
           break;
 
         case 'browse_result':
@@ -2403,44 +2577,54 @@
           break;
 
         case 'progress': {
-          if (!activeEngine || activeEngine !== d.engine) return;
-          const subEl = document.getElementById(d.engine === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
-          const progEl = document.getElementById(d.engine === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
+          const eng = normalizeEngine(d.engine || activeEngine || 'hls');
+          if (activeEngine && activeEngine !== eng) return;
+          const els = getEngineElements(eng);
+          if (!activeEngine) {
+            clearDoneResetTimer();
+            activeEngine = eng;
+            els.card.classList.add('running');
+          }
 
           if (d.merging) {
-            progEl.style.width = '99%';
-            subEl.textContent = t('subMerging');
+            els.prog.style.width = '99%';
+            els.sub.textContent = t('subMerging');
             return;
           }
 
           const pct = Math.max(0, Math.min(100, Number(d.percent) || 0));
-          progEl.style.width = `${pct.toFixed(1)}%`;
+          els.prog.style.width = `${pct.toFixed(1)}%`;
 
-          if (d.speed && d.percent >= 0) {
-            subEl.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}% (${d.speed})`;
+          const hasPct = typeof d.percent === 'number' && d.percent >= 0;
+          if (d.speed && d.detail && hasPct) {
+            els.sub.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}% (${d.speed} · ${d.detail})`;
+          } else if (d.speed && hasPct) {
+            els.sub.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}% (${d.speed})`;
+          } else if (d.detail && hasPct) {
+            els.sub.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}% (${d.detail})`;
           } else if (d.detail) {
-            subEl.textContent = `${t('subDownloading')} · ${d.detail}`;
+            els.sub.textContent = `${t('subDownloading')} · ${d.detail}`;
           } else {
-            subEl.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}%`;
+            els.sub.textContent = `${t('subDownloading')} · ${pct.toFixed(0)}%`;
           }
           break;
         }
 
         case 'done': {
-          const eng = d.engine || activeEngine;
+          const eng = normalizeOptionalEngine(d.engine || activeEngine);
           if (eng) {
             clearDoneResetTimer();
-            const cardEl = document.getElementById(eng === 'ytdlp' ? 'cardYtdlp' : 'cardFfmpeg');
-            const subEl = document.getElementById(eng === 'ytdlp' ? 'subYtdlp' : 'subFfmpeg');
-            const progEl = document.getElementById(eng === 'ytdlp' ? 'progYtdlp' : 'progFfmpeg');
-            progEl.style.width = '100%';
-            subEl.textContent = t('subDone');
+            const els = getEngineElements(eng);
+            activeEngine = eng;
+            els.card.classList.add('running');
+            els.prog.style.width = '100%';
+            els.sub.textContent = t('subDone');
             showToast(t('toastDone'));
             doneResetTimer = setTimeout(() => {
               doneResetTimer = null;
               if (activeEngine !== eng) return;
-              cardEl.classList.remove('running');
-              progEl.style.width = '0%';
+              els.card.classList.remove('running');
+              els.prog.style.width = '0%';
               activeEngine = null;
               syncEngineSubtitles();
             }, 1600);
@@ -2448,21 +2632,26 @@
           break;
         }
 
-        case 'aborted':
-          if (!d.engine || !activeEngine || d.engine === activeEngine) {
+        case 'aborted': {
+          const reqEng = normalizeOptionalEngine(d.engine);
+          if (!reqEng || !activeEngine || reqEng === activeEngine) {
             resetEngineUI();
           }
           break;
+        }
 
-        case 'error_event':
-          if (d.activeEngine === 'ytdlp' || d.activeEngine === 'ffmpeg') {
+        case 'error_event': {
+          const runningEng = normalizeOptionalEngine(d.activeEngine);
+          const errEng = normalizeOptionalEngine(d.engine);
+          if (runningEng) {
             resetEngineUI();
-            setEngineRunningUI(d.activeEngine, t('subDownloading'), 0);
-          } else if (!d.engine || !activeEngine || d.engine === activeEngine) {
+            setEngineRunningUI(runningEng, t('subDownloading'), 0);
+          } else if (!errEng || !activeEngine || errEng === activeEngine) {
             resetEngineUI();
           }
           showToast(d.message || t('toastError'));
           break;
+        }
       }
     }
 
@@ -2473,7 +2662,7 @@
       if (IS_DESKTOP) return;
       if (eventSource) eventSource.close();
       eventSource = new EventSource('/api/events');
-      ['ready', 'log', 'progress', 'done', 'aborted', 'error_event'].forEach((evt) => {
+      ['ready', 'log', 'progress', 'done', 'aborted', 'error_event', 'ytdlp_update_result'].forEach((evt) => {
         eventSource.addEventListener(evt, (e) => {
           try {
             handleBackendEvent(evt, JSON.parse(e.data));
@@ -2744,11 +2933,6 @@
       setInputWithTitle('uaInput', DEFAULT_UA);
       setInputWithTitle('ja3Input', DEFAULT_JA3);
       setInputWithTitle('akamaiInput', DEFAULT_AKAMAI);
-      const fpHint = t('fpHint');
-      ['lblSetFingerprint', 'lblSetJA3', 'lblSetAkamai'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.title = fpHint;
-      });
       renderModuleBadges();
       syncFingerprintLinkUI();
       updateClock();

@@ -20,14 +20,25 @@ corresponding FFmpeg source code from https://ffmpeg.org/download.html and the
 gyan.dev build scripts / release archives.
 
 --------------------------------------------------------------------------------
-2. yt-dlp (2026.10.26)
+2. azuretls-client, fhttp & uTLS (Native TLS/HTTP2 Fingerprinting)
 --------------------------------------------------------------------------------
-Project / Source: https://github.com/yt-dlp/yt-dlp
-License:          The Unlicense (Public Domain)
-Full License Text: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+Packages:         github.com/Noooste/azuretls-client
+                  github.com/Noooste/fhttp
+                  github.com/Noooste/utls
+License:          MIT License (azuretls-client) / BSD 3-Clause License (fhttp, utls)
+Source:           https://github.com/Noooste/azuretls-client
+                  https://github.com/Noooste/fhttp
+                  https://github.com/Noooste/utls
 
 --------------------------------------------------------------------------------
-3. go-webview2 & go-winloader
+3. refraction-networking/utls
+--------------------------------------------------------------------------------
+Package:          github.com/refraction-networking/utls
+License:          BSD 3-Clause License
+Source:           https://github.com/refraction-networking/utls
+
+--------------------------------------------------------------------------------
+4. go-webview2 & go-winloader
 --------------------------------------------------------------------------------
 Packages:         github.com/jchv/go-webview2
                   github.com/jchv/go-winloader
@@ -36,7 +47,7 @@ Source:           https://github.com/jchv/go-webview2
                   https://github.com/jchv/go-winloader
 
 --------------------------------------------------------------------------------
-4. golang.org/x/sys
+5. golang.org/x/sys
 --------------------------------------------------------------------------------
 Package:          golang.org/x/sys
 License:          BSD 3-Clause License

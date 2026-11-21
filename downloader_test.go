@@ -4,10 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestSanitizeFilename(t *testing.T) {
@@ -108,71 +112,6 @@ func TestValidateDownloadURL(t *testing.T) {
 	}
 }
 
-func TestBuildYtDlpArgsAndEnv(t *testing.T) {
-	opt := DownloadOptions{
-		M3U8Url:        "https://example.com/playlist.m3u8",
-		Title:          "Test",
-		OutputDir:      `C:\Videos`,
-		Engine:         "ytdlp",
-		RefererEnabled: true,
-		UserAgent:      "CustomUA/1.0\r\nX-Evil: 1",
-		JA3:            "771,4865",
-		Akamai:         "1:65536",
-		Concurrency:    1,
-		YtDlpPath:      `C:\bin\yt-dlp.exe`,
-		FFmpegPath:     `C:\bin\ffmpeg.exe`,
-	}
-
-	args := buildYtDlpArgs(opt, opt.UserAgent, opt.JA3, opt.Akamai, `C:\Videos\Test.%(ext)s`)
-	if slices.Contains(args, "--concurrent-fragments") {
-		t.Fatalf("unexpected redundant --concurrent-fragments in %v", args)
-	}
-	if !containsPair(args, "-N", "1") {
-		t.Fatalf("expected -N 1 in %v", args)
-	}
-	if !containsPair(args, "--remux-video", "mp4") || !containsPair(args, "--merge-output-format", "mp4") {
-		t.Fatalf("expected mp4 remux and merge flags in %v", args)
-	}
-	if !slices.Contains(args, "--force-overwrites") {
-		t.Fatalf("expected --force-overwrites flag in %v", args)
-	}
-	if !containsPair(args, "--impersonate", "chrome") {
-		t.Fatalf("expected --impersonate chrome when JA3/Akamai non-empty, got %v", args)
-	}
-	if !containsPair(args, "--user-agent", "CustomUA/1.0X-Evil: 1") {
-		t.Fatalf("expected sanitized UA in %v", args)
-	}
-
-	argsNoFP := buildYtDlpArgs(opt, "", "", "", `C:\Videos\Test.%(ext)s`)
-	if slices.Contains(argsNoFP, "--impersonate") {
-		t.Fatalf("did not expect --impersonate when both JA3 and Akamai are empty, got %v", argsNoFP)
-	}
-	if !containsPair(argsNoFP, "--user-agent", DefaultUserAgent) {
-		t.Fatalf("expected fallback DefaultUserAgent when UA empty, got %v", argsNoFP)
-	}
-
-	optNoRef := opt
-	optNoRef.RefererEnabled = false
-	argsNoRef := buildYtDlpArgs(optNoRef, opt.UserAgent, opt.JA3, opt.Akamai, `C:\Videos\Test.%(ext)s`)
-	if slices.Contains(argsNoRef, "--impersonate") || slices.Contains(argsNoRef, "--add-header") {
-		t.Fatalf("did not expect referer/impersonate flags when RefererEnabled=false, got %v", argsNoRef)
-	}
-
-	env := buildDownloadEnv([]string{
-		"PATH=C:\\Windows\\System32",
-		"YT_DLP_JA3=stale",
-		"YT_DLP_AKAMAI=stale",
-	})
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "YT_DLP_JA3=") || strings.HasPrefix(kv, "YT_DLP_AKAMAI=") {
-			t.Fatalf("unexpected invalid env var injected: %s", kv)
-		}
-	}
-	if !slices.Contains(env, "PYTHONUTF8=1") || !slices.Contains(env, "PYTHONIOENCODING=utf-8:replace") {
-		t.Fatalf("missing UTF-8 Python env vars in %v", env)
-	}
-}
-
 func TestBuildFFmpegArgs(t *testing.T) {
 	opt := DownloadOptions{
 		M3U8Url:        "https://example.com/live.m3u8",
@@ -199,20 +138,9 @@ func TestBuildFFmpegArgs(t *testing.T) {
 	}
 }
 
-func TestParseHMSAndProgressRegex(t *testing.T) {
+func TestParseHMSAndFFmpegProgressRegex(t *testing.T) {
 	if got := parseHMS("01", "02", "03.5"); got != 3723.5 {
 		t.Fatalf("parseHMS = %v, want 3723.5", got)
-	}
-
-	ytLine := "[download]  42.7% of ~  120.50MiB at    3.45MiB/s ETA 00:22 (frag 18/42)"
-	if m := ytdlpPctRegex.FindStringSubmatch(ytLine); len(m) != 2 || m[1] != "42.7" {
-		t.Fatalf("ytdlpPctRegex mismatch: %v", m)
-	}
-	if m := ytdlpSpeedRegex.FindStringSubmatch(ytLine); len(m) != 2 || m[1] != "3.45MiB/s" {
-		t.Fatalf("ytdlpSpeedRegex mismatch: %v", m)
-	}
-	if m := ytdlpFragRegex.FindStringSubmatch(ytLine); len(m) != 3 || m[1] != "18" || m[2] != "42" {
-		t.Fatalf("ytdlpFragRegex mismatch: %v", m)
 	}
 
 	ffDur := "Duration: 00:24:10.50, start: 0.000000, bitrate: N/A"
@@ -228,13 +156,78 @@ func TestParseHMSAndProgressRegex(t *testing.T) {
 	}
 }
 
-func TestBuildYtDlpOutTemplatePercentEscaping(t *testing.T) {
-	dir := `C:\Users\100%Anime\Downloads`
-	title := `Ep01_100%_%(title)s`
-	got := buildYtDlpOutTemplate(dir, title)
-	want := `C:\Users\100%%Anime\Downloads\Ep01_100%%_%%(title)s.%(ext)s`
-	if got != want {
-		t.Fatalf("buildYtDlpOutTemplate(%q, %q) = %q, want %q", dir, title, got, want)
+func TestRunDownloadEngineRouting(t *testing.T) {
+	origHook := hlsRunNativeDownloadFn
+	t.Cleanup(func() {
+		hlsRunNativeDownloadFn = origHook
+	})
+
+	var calledWith []DownloadOptions
+	hlsRunNativeDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
+		calledWith = append(calledWith, opt)
+		return filepath.Join(opt.OutputDir, opt.Title+".mp4"), nil
+	}
+
+	for _, rawEngine := range []string{"hls", "ytdlp", ""} {
+		outDir := t.TempDir()
+		out, err := RunDownload(context.Background(), DownloadOptions{
+			M3U8Url:        "https://example.com/playlist.m3u8",
+			Title:          "RouteCheck",
+			OutputDir:      outDir,
+			Engine:         rawEngine,
+			RefererEnabled: true,
+			Concurrency:    8,
+		}, DownloadCallbacks{})
+		if err != nil {
+			t.Fatalf("RunDownload(engine=%q) failed: %v", rawEngine, err)
+		}
+		if out != filepath.Join(outDir, "RouteCheck.mp4") {
+			t.Fatalf("unexpected output path %q", out)
+		}
+	}
+
+	if len(calledWith) != 3 {
+		t.Fatalf("expected 3 native hook invocations, got %d", len(calledWith))
+	}
+	for i, got := range calledWith {
+		if got.Engine != "hls" {
+			t.Fatalf("call %d: normalized Engine = %q, want hls", i, got.Engine)
+		}
+		if got.Concurrency != DefaultConcurrency {
+			t.Fatalf("call %d: Concurrency = %d, want %d", i, got.Concurrency, DefaultConcurrency)
+		}
+	}
+
+	// Nil hook check
+	hlsRunNativeDownloadFn = nil
+	if _, err := RunDownload(context.Background(), DownloadOptions{
+		M3U8Url:   "https://example.com/playlist.m3u8",
+		OutputDir: t.TempDir(),
+		Engine:    "hls",
+	}, DownloadCallbacks{}); err == nil || !strings.Contains(err.Error(), "原生 HLS 引擎尚未註冊") {
+		t.Fatalf("expected missing native engine hook error, got %v", err)
+	}
+
+	// Engine "ffmpeg" routes to FFmpeg branch without calling hlsRunNativeDownloadFn
+	nativeCalled := false
+	hlsRunNativeDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
+		nativeCalled = true
+		return "", nil
+	}
+	missingDir := t.TempDir()
+	_, err := RunDownload(context.Background(), DownloadOptions{
+		M3U8Url:        "https://example.com/live.m3u8",
+		Title:          "FFmpegRouteCheck",
+		OutputDir:      t.TempDir(),
+		Engine:         "ffmpeg",
+		RefererEnabled: true,
+		FFmpegPath:     filepath.Join(missingDir, "missing-ffmpeg.exe"),
+	}, DownloadCallbacks{})
+	if nativeCalled {
+		t.Fatal("Engine=ffmpeg must NOT call hlsRunNativeDownloadFn")
+	}
+	if err == nil || !strings.Contains(err.Error(), "啟動 FFMPEG 失敗") {
+		t.Fatalf("expected missing ffmpeg start error, got %v", err)
 	}
 }
 
@@ -246,28 +239,405 @@ func TestRunDownloadValidationWithNilCallbacks(t *testing.T) {
 		t.Fatal("expected error for invalid URL with CRLF")
 	}
 
-	// Valid URL + missing executable exercises nil OnLog / OnProgress guards inside RunDownload
+	// Valid URL + missing ffmpeg executable exercises nil OnLog / OnProgress guards inside RunDownload
 	missingDir := t.TempDir()
 	_, err = RunDownload(context.Background(), DownloadOptions{
 		M3U8Url:        "https://example.com/live.m3u8",
 		Title:          "NilCallbackCheck",
 		OutputDir:      t.TempDir(),
-		Engine:         "ytdlp",
+		Engine:         "ffmpeg",
 		RefererEnabled: true,
 		JA3:            DefaultJA3,
-		YtDlpPath:      filepath.Join(missingDir, "missing-yt-dlp.exe"),
 		FFmpegPath:     filepath.Join(missingDir, "missing-ffmpeg.exe"),
 	}, DownloadCallbacks{})
-	if err == nil || !strings.Contains(err.Error(), "啟動 YT-DLP 失敗") {
-		t.Fatalf("expected missing yt-dlp start error without panic, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "啟動 FFMPEG 失敗") {
+		t.Fatalf("expected missing ffmpeg start error without panic, got %v", err)
+	}
+
+	// Empty FFmpegPath fails before launching any command
+	_, err = RunDownload(context.Background(), DownloadOptions{
+		M3U8Url:    "https://example.com/live.m3u8",
+		Title:      "EmptyFFmpegPathCheck",
+		OutputDir:  t.TempDir(),
+		Engine:     "ffmpeg",
+		FFmpegPath: "   ",
+	}, DownloadCallbacks{})
+	if err == nil || !strings.Contains(err.Error(), "找不到本機 FFMPEG 執行檔路徑") {
+		t.Fatalf("expected empty FFmpegPath error, got %v", err)
 	}
 }
 
-func containsPair(slice []string, a, b string) bool {
-	for i := 0; i+1 < len(slice); i++ {
-		if slice[i] == a && slice[i+1] == b {
-			return true
+func TestIsLikelyWebpageURL(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", want: true},
+		{url: "https://youtu.be/abc", want: true},
+		{url: "https://music.youtube.com/watch?v=xyz", want: true},
+		{url: "https://www.bilibili.com/video/BV1xx411c7mD", want: true},
+		{url: "https://ani.gamer.com.tw/animeVideo.php?sn=12345", want: true},
+		{url: "https://bahamut.akamaized.net/12345/playlist_basic.m3u8?token=123", want: false},
+		{url: "https://www.youtube.com/live/playlist.m3u8", want: false},
+		{url: "https://cdn.example.com/stream/video.m3u?x=1", want: false},
+		{url: "https://cdn.example.com/watch?id=999", want: false},
+	}
+	for _, tc := range cases {
+		if got := isLikelyWebpageURL(tc.url); got != tc.want {
+			t.Errorf("isLikelyWebpageURL(%q) = %v, want %v", tc.url, got, tc.want)
 		}
 	}
-	return false
+}
+
+func TestRunDownloadHybridRoutingYouTube(t *testing.T) {
+	origYtDlpFn := runExternalYtDlpFn
+	origNativeFn := hlsRunNativeDownloadFn
+	defer func() {
+		runExternalYtDlpFn = origYtDlpFn
+		hlsRunNativeDownloadFn = origNativeFn
+	}()
+
+	var (
+		nativeCalled   bool
+		ytCalled       bool
+		capturedOpt    DownloadOptions
+		capturedRawTit string
+	)
+	hlsRunNativeDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
+		nativeCalled = true
+		return "", nil
+	}
+	runExternalYtDlpFn = func(ctx context.Context, opt DownloadOptions, rawTitle string, cb DownloadCallbacks) (string, error) {
+		ytCalled = true
+		capturedOpt = opt
+		capturedRawTit = rawTitle
+		return filepath.Join(opt.OutputDir, "Mock Video.mp4"), nil
+	}
+
+	outDir := t.TempDir()
+	outPath, err := RunDownload(context.Background(), DownloadOptions{
+		M3U8Url:        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		Title:          "",
+		OutputDir:      outDir,
+		Engine:         "hls",
+		RefererEnabled: false,
+		FFmpegPath:     filepath.Join(t.TempDir(), "ffmpeg.exe"),
+	}, DownloadCallbacks{})
+	if err != nil {
+		t.Fatalf("RunDownload youtube failed: %v", err)
+	}
+	if nativeCalled {
+		t.Fatal("expected native HLS NOT to be called for youtube webpage URL")
+	}
+	if !ytCalled {
+		t.Fatal("expected external yt-dlp router to be called")
+	}
+	if capturedRawTit != "" {
+		t.Fatalf("capturedRawTit = %q, want empty so yt-dlp auto-fills video title", capturedRawTit)
+	}
+	if outPath != filepath.Join(outDir, "Mock Video.mp4") {
+		t.Fatalf("outPath = %q, want Mock Video.mp4", outPath)
+	}
+
+	args := buildYtDlpArgs(capturedOpt, capturedRawTit)
+	for _, forbidden := range []string{"--add-header", "--referer", "--user-agent"} {
+		if slices.Contains(args, forbidden) {
+			t.Fatalf("RefererEnabled=false must NOT attach %s in args: %v", forbidden, args)
+		}
+	}
+	outTpl := buildYtDlpOutTemplate(outDir, "")
+	if !strings.Contains(outTpl, "%(title).120B.%(ext)s") || strings.Contains(outTpl, "巴哈動畫瘋_") {
+		t.Fatalf("auto-title outTemplate = %q, want %%(title).120B.%%(ext)s", outTpl)
+	}
+
+	t.Setenv("YT_DLP_JA3", "bad-ja3")
+	t.Setenv("YT_DLP_AKAMAI", "bad-akamai")
+	env := buildYtDlpEnv()
+	for _, e := range env {
+		if strings.HasPrefix(e, "YT_DLP_JA3=") || strings.HasPrefix(e, "YT_DLP_AKAMAI=") {
+			t.Fatalf("unexpected injected env var in yt-dlp env: %s", e)
+		}
+	}
+	if !slices.Contains(env, "PYTHONUTF8=1") || !slices.Contains(env, "PYTHONIOENCODING=utf-8:replace") {
+		t.Fatalf("expected UTF-8 Python env vars, got %v", env)
+	}
+}
+
+func TestRunDownloadFallbackToYtDlpOnNonM3U8Webpage(t *testing.T) {
+	if !looksLikeHTMLWebpage([]byte("\xef\xbb\xbf  <!DOCTYPE html><html><head></head></html>")) {
+		t.Fatal("expected looksLikeHTMLWebpage to detect BOM + <!DOCTYPE html>")
+	}
+	if looksLikeHTMLWebpage([]byte("#EXTM3U\n#EXT-X-VERSION:3\n")) {
+		t.Fatal("expected #EXTM3U not to be flagged as HTML")
+	}
+
+	origYtDlpFn := runExternalYtDlpFn
+	origNativeFn := hlsRunNativeDownloadFn
+	defer func() {
+		runExternalYtDlpFn = origYtDlpFn
+		hlsRunNativeDownloadFn = origNativeFn
+	}()
+
+	var nativeCalled, ytCalled bool
+	hlsRunNativeDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
+		nativeCalled = true
+		return "", fmt.Errorf("%w: not valid playlist", errNonM3U8Webpage)
+	}
+	runExternalYtDlpFn = func(ctx context.Context, opt DownloadOptions, rawTitle string, cb DownloadCallbacks) (string, error) {
+		ytCalled = true
+		return filepath.Join(opt.OutputDir, "Fallback.mp4"), nil
+	}
+
+	outPath, err := RunDownload(context.Background(), DownloadOptions{
+		M3U8Url:   "https://unknown-video-host.example/watch?id=42",
+		Title:     "CustomName",
+		OutputDir: t.TempDir(),
+		Engine:    "hls",
+	}, DownloadCallbacks{})
+	if err != nil {
+		t.Fatalf("RunDownload HTML fallback failed: %v", err)
+	}
+	if !nativeCalled || !ytCalled {
+		t.Fatalf("expected nativeCalled=true and ytCalled=true, got native=%v yt=%v", nativeCalled, ytCalled)
+	}
+	if !strings.HasSuffix(outPath, "Fallback.mp4") {
+		t.Fatalf("unexpected fallback outPath: %q", outPath)
+	}
+}
+
+func TestRunExternalYtDlpMissingBinaryError(t *testing.T) {
+	origFindFn := findOptionalYtDlpFn
+	defer func() { findOptionalYtDlpFn = origFindFn }()
+	findOptionalYtDlpFn = func() (string, string) { return "", "" }
+
+	var logs []string
+	_, err := runExternalYtDlp(context.Background(), DownloadOptions{
+		M3U8Url:   "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		OutputDir: t.TempDir(),
+		YtDlpPath: "",
+	}, "", DownloadCallbacks{
+		OnLog: func(tag, _, msg string) {
+			logs = append(logs, tag+" "+msg)
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when yt-dlp.exe is missing")
+	}
+	if !strings.Contains(err.Error(), "Settings") || !strings.Contains(err.Error(), "安裝") {
+		t.Fatalf("expected error guiding user to Settings to install yt-dlp.exe, got: %v", err)
+	}
+	if !errors.Is(err, err) || len(logs) == 0 || !strings.Contains(logs[0], "[警告]") {
+		t.Fatalf("expected warning log when yt-dlp missing, got %v", logs)
+	}
+}
+
+func TestBuildYtDlpArgs(t *testing.T) {
+	outDir := t.TempDir()
+	argsNoHeaders := buildYtDlpArgs(DownloadOptions{
+		M3U8Url:        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		OutputDir:      outDir,
+		RefererEnabled: false,
+		FFmpegPath:     filepath.Join(outDir, "ffmpeg.exe"),
+	}, "")
+
+	for _, required := range []string{
+		"--no-quiet",
+		"--progress",
+		"--newline",
+		"--print",
+		"after_move:__ANIDL_OUTFILE__:%(filepath)s",
+		"-N",
+		"1",
+	} {
+		if !slices.Contains(argsNoHeaders, required) {
+			t.Fatalf("buildYtDlpArgs missing %q in %v", required, argsNoHeaders)
+		}
+	}
+	for _, forbidden := range []string{"--add-header", "--referer", "--user-agent"} {
+		if slices.Contains(argsNoHeaders, forbidden) {
+			t.Fatalf("RefererEnabled=false must not include %q: %v", forbidden, argsNoHeaders)
+		}
+	}
+
+	argsWithHeaders := buildYtDlpArgs(DownloadOptions{
+		M3U8Url:        "https://ani.gamer.com.tw/animeVideo.php?sn=1",
+		OutputDir:      outDir,
+		RefererEnabled: true,
+		UserAgent:      "Agent/1.0",
+	}, "MyEpisode")
+	if !slices.Contains(argsWithHeaders, "--add-header") || !slices.Contains(argsWithHeaders, "--user-agent") {
+		t.Fatalf("RefererEnabled=true missing header flags: %v", argsWithHeaders)
+	}
+	if !slices.Contains(argsWithHeaders, filepath.Join(outDir, "MyEpisode.%(ext)s")) {
+		t.Fatalf("expected sanitized custom title template, got %v", argsWithHeaders)
+	}
+}
+
+func TestBuildYtDlpEnv(t *testing.T) {
+	t.Setenv("YT_DLP_JA3", "stale-ja3")
+	t.Setenv("YT_DLP_AKAMAI", "stale-akamai")
+	t.Setenv("PYTHONUNBUFFERED", "0")
+
+	env := buildYtDlpEnv()
+	for _, e := range env {
+		if strings.HasPrefix(e, "YT_DLP_JA3=") || strings.HasPrefix(e, "YT_DLP_AKAMAI=") || e == "PYTHONUNBUFFERED=0" {
+			t.Fatalf("unexpected leaked or un-overridden env entry: %s", e)
+		}
+	}
+	for _, want := range []string{
+		"PYTHONUNBUFFERED=1",
+		"PYTHONUTF8=1",
+		"PYTHONIOENCODING=utf-8:replace",
+	} {
+		if !slices.Contains(env, want) {
+			t.Fatalf("buildYtDlpEnv missing %s in env", want)
+		}
+	}
+}
+
+func TestParseYtDlpOutputLine(t *testing.T) {
+	t.Run("StandardYouTubeDownloadAndCompletion", func(t *testing.T) {
+		var (
+			updates []ProgressUpdate
+			logs    []string
+			lastAt  time.Time
+			lastLog time.Time
+		)
+		cb := DownloadCallbacks{
+			OnProgress: func(p ProgressUpdate) { updates = append(updates, p) },
+			OnLog:      func(tag, _, msg string) { logs = append(logs, tag+" "+msg) },
+		}
+
+		parseYtDlpOutputLine("[download]  42.5% of   15.23MiB at    3.20MiB/s ETA 00:03", &lastAt, &lastLog, cb)
+		if len(updates) != 1 || updates[0].Engine != "hls" || updates[0].Percent != 42.5 || updates[0].Speed != "3.20MiB/s" || updates[0].Detail != "" {
+			t.Fatalf("unexpected standard progress update: %+v", updates)
+		}
+
+		// Second rapid update within 250ms should be throttled (percent < 100)
+		parseYtDlpOutputLine("[download]  45.0% of   15.23MiB at    3.40MiB/s ETA 00:02", &lastAt, &lastLog, cb)
+		if len(updates) != 1 {
+			t.Fatalf("expected 250ms throttle to suppress immediate update, got %d updates", len(updates))
+		}
+
+		// 100% completion bypasses throttle
+		parseYtDlpOutputLine("[download] 100% of   15.23MiB in 00:00:05 at 3.04MiB/s", &lastAt, &lastLog, cb)
+		if len(updates) != 2 || updates[1].Percent != 100.0 || updates[1].Speed != "3.04MiB/s" {
+			t.Fatalf("expected 100%% update to bypass throttle, got %+v", updates)
+		}
+		if len(logs) < 2 {
+			t.Fatalf("expected [進度] logs emitted at start and 100%%, got %v", logs)
+		}
+	})
+
+	t.Run("UnknownSpeedAndFragmentDetail", func(t *testing.T) {
+		var updates []ProgressUpdate
+		var lastAt, lastLog time.Time
+		cb := DownloadCallbacks{
+			OnProgress: func(p ProgressUpdate) { updates = append(updates, p) },
+		}
+
+		parseYtDlpOutputLine("[download]  45.0% of   10.00MiB at  Unknown B/s ETA Unknown", &lastAt, &lastLog, cb)
+		if len(updates) != 1 || updates[0].Percent != 45.0 || updates[0].Speed != "" {
+			t.Fatalf("expected empty Speed for Unknown B/s, got %+v", updates)
+		}
+
+		lastAt = time.Time{}
+		parseYtDlpOutputLine("[download]  50.0% of ~  20.00MiB at  1.50MiB/s ETA 00:10 (frag 10/20)", &lastAt, &lastLog, cb)
+		if len(updates) != 2 || updates[1].Percent != 50.0 || updates[1].Speed != "1.50MiB/s" || updates[1].Detail != "frag 10/20" {
+			t.Fatalf("expected fragment detail, got %+v", updates)
+		}
+	})
+
+	t.Run("MergerOutfileErrorWarningAndStderrPipe", func(t *testing.T) {
+		var (
+			mu         sync.Mutex
+			cbMu       sync.Mutex
+			updates    []ProgressUpdate
+			loggedMsgs []string
+			lastAt     time.Time
+			lastLog    time.Time
+			outFile    string
+		)
+		cb := DownloadCallbacks{
+			OnProgress: func(p ProgressUpdate) {
+				cbMu.Lock()
+				updates = append(updates, p)
+				cbMu.Unlock()
+			},
+			OnLog: func(tag, _, msg string) {
+				cbMu.Lock()
+				loggedMsgs = append(loggedMsgs, tag+" "+msg)
+				cbMu.Unlock()
+			},
+		}
+
+		stderrSim := strings.NewReader(
+			"[youtube] Extracting URL: https://www.youtube.com/watch?v=abc\n" +
+				"[download] Destination: C:\\Out\\test.f137.mp4\n" +
+				"WARNING: transient warning\n" +
+				"[download]  64.0% of   15.23MiB at    3.20MiB/s ETA 00:02\r" +
+				`[Merger] Merging formats into "C:\Out\test.mp4"` + "\n",
+		)
+		stdoutSim := strings.NewReader("__ANIDL_OUTFILE__:Z:\\test\\video.mp4\n")
+
+		handleLine := func(line string) {
+			mu.Lock()
+			defer mu.Unlock()
+			f, isOut := parseYtDlpOutputLine(line, &lastAt, &lastLog, cb)
+			if isOut {
+				outFile = f
+			}
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			scanLinesAndReturns(stderrSim, handleLine)
+		}()
+		go func() {
+			defer wg.Done()
+			scanLinesAndReturns(stdoutSim, handleLine)
+		}()
+		wg.Wait()
+
+		if outFile != `Z:\test\video.mp4` {
+			t.Fatalf("outFile = %q, want Z:\\test\\video.mp4", outFile)
+		}
+		if len(updates) != 2 {
+			t.Fatalf("expected 2 progress updates (download + merger), got %+v", updates)
+		}
+		if updates[0].Engine != "hls" || updates[0].Percent != 64.0 {
+			t.Fatalf("unexpected stderr download update: %+v", updates[0])
+		}
+		if updates[1].Engine != "hls" || !updates[1].Merging || updates[1].Percent != 99.0 {
+			t.Fatalf("unexpected merger update: %+v", updates[1])
+		}
+
+		var sawYT, sawWarn, sawRemux bool
+		for _, msg := range loggedMsgs {
+			if strings.Contains(msg, "__ANIDL_OUTFILE__:") {
+				t.Fatalf("internal __ANIDL_OUTFILE__: marker leaked into console logs: %q", msg)
+			}
+			if strings.HasPrefix(msg, "[YT-DLP]") {
+				sawYT = true
+			}
+			if strings.HasPrefix(msg, "[警告]") {
+				sawWarn = true
+			}
+			if strings.HasPrefix(msg, "[封裝]") {
+				sawRemux = true
+			}
+		}
+		if !sawYT || !sawWarn || !sawRemux {
+			t.Fatalf("missing expected log categories (yt=%v warn=%v remux=%v): %v", sawYT, sawWarn, sawRemux, loggedMsgs)
+		}
+
+		// Verify ERROR: classification
+		loggedMsgs = nil
+		parseYtDlpOutputLine("ERROR: unable to download video data", &lastAt, &lastLog, cb)
+		if len(loggedMsgs) != 1 || !strings.HasPrefix(loggedMsgs[0], "[錯誤]") {
+			t.Fatalf("expected [錯誤] classification, got %v", loggedMsgs)
+		}
+	})
 }

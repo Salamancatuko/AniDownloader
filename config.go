@@ -12,7 +12,8 @@ import (
 
 const (
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-	DefaultJA3       = "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0"
+	DefaultJA3       = "" // 空字串代表使用 azuretls.Chrome 內建最新原生 TLS 1.3 指紋
+	legacyDefaultJA3 = "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0"
 	DefaultAkamai    = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p"
 )
 
@@ -67,6 +68,10 @@ func LoadConfig() AppConfig {
 	}
 	if strings.TrimSpace(cfg.SaveDir) == "" {
 		cfg.SaveDir = GetDefaultDownloadDir()
+	}
+	if strings.TrimSpace(cfg.JA3) == legacyDefaultJA3 {
+		cfg.JA3 = ""
+		SaveConfig(cfg)
 	}
 	return cfg
 }

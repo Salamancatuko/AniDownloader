@@ -152,3 +152,87 @@ func TestSaveConfigConcurrentAtomic(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultConfigJA3Empty(t *testing.T) {
+	if DefaultJA3 != "" {
+		t.Fatalf("DefaultJA3 = %q, want empty string", DefaultJA3)
+	}
+	if cfg := DefaultConfig(); cfg.JA3 != "" {
+		t.Fatalf("DefaultConfig().JA3 = %q, want empty string", cfg.JA3)
+	}
+}
+
+func TestLoadConfigMigratesLegacyJA3AndPreservesCustomJA3(t *testing.T) {
+	t.Run("MigratesLegacyDefaultJA3", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("LOCALAPPDATA", tmp)
+
+		cfgPath := getConfigPath()
+		if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		legacyJSON, err := json.Marshal(AppConfig{
+			Lang:           "zh-TW",
+			Opacity:        48,
+			RefererEnabled: true,
+			SaveDir:        tmp,
+			UserAgent:      DefaultUserAgent,
+			JA3:            legacyDefaultJA3,
+			Akamai:         DefaultAkamai,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cfgPath, legacyJSON, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded := LoadConfig()
+		if loaded.JA3 != "" {
+			t.Fatalf("loaded.JA3 = %q, want empty after legacy migration", loaded.JA3)
+		}
+
+		persistedBytes, err := os.ReadFile(cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var persisted AppConfig
+		if err := json.Unmarshal(persistedBytes, &persisted); err != nil {
+			t.Fatal(err)
+		}
+		if persisted.JA3 != "" {
+			t.Fatalf("persisted.JA3 = %q, want empty on disk after migration", persisted.JA3)
+		}
+	})
+
+	t.Run("PreservesCustomJA3", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("LOCALAPPDATA", tmp)
+
+		cfgPath := getConfigPath()
+		if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		const customJA3 = "771,4865-4866,0-23,29,0"
+		customJSON, err := json.Marshal(AppConfig{
+			Lang:           "zh-TW",
+			Opacity:        48,
+			RefererEnabled: true,
+			SaveDir:        tmp,
+			UserAgent:      DefaultUserAgent,
+			JA3:            customJA3,
+			Akamai:         DefaultAkamai,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cfgPath, customJSON, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded := LoadConfig()
+		if loaded.JA3 != customJA3 {
+			t.Fatalf("loaded.JA3 = %q, want preserved %q", loaded.JA3, customJA3)
+		}
+	})
+}

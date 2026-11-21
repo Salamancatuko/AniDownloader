@@ -49,14 +49,19 @@ type AppServer struct {
 	sseMu      sync.Mutex
 	sseClients map[chan sseMessage]struct{}
 
-	browseFolderFn func() string
-	nativeEmitFn   func(event string, jsonPayload string)
-	runDownloadFn  func(context.Context, DownloadOptions, DownloadCallbacks) (string, error)
+	browseFolderFn    func() string
+	nativeEmitFn      func(event string, jsonPayload string)
+	runDownloadFn     func(context.Context, DownloadOptions, DownloadCallbacks) (string, error)
+	installYtDlpFn    func(context.Context, func(tag, color, msg string)) (ToolInfo, error)
+	ytdlpUpdateMu     sync.Mutex
+	ytdlpUpdating     bool
+	ytdlpUpdateCancel context.CancelFunc
+	ytdlpUpdateWG     sync.WaitGroup
 
 	listener   net.Listener
 	listenHost string
 	server     *http.Server
-	BaseURL    string
+	baseURL    string
 }
 
 func NewAppServer() *AppServer {
@@ -94,7 +99,7 @@ func (s *AppServer) ActiveEngine() string {
 func (s *AppServer) GetBaseURL() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.BaseURL
+	return s.baseURL
 }
 
 func (s *AppServer) ClearLogs() {
@@ -118,6 +123,7 @@ func (s *AppServer) buildHandler() http.Handler {
 	mux.HandleFunc("/api/download", s.protectAPI(s.handleDownload))
 	mux.HandleFunc("/api/stop", s.protectAPI(s.handleStop))
 	mux.HandleFunc("/api/logs/clear", s.protectAPI(s.handleClearLogs))
+	mux.HandleFunc("/api/ytdlp/update", s.protectAPI(s.handleYtDlpUpdate))
 	mux.HandleFunc("/api/events", s.protectAPI(s.handleEvents))
 	return mux
 }
@@ -137,7 +143,7 @@ func (s *AppServer) Start() error {
 	srv := &http.Server{Handler: s.buildHandler()}
 	s.listener = ln
 	s.listenHost = host
-	s.BaseURL = "http://" + host
+	s.baseURL = "http://" + host
 	s.server = srv
 	s.mu.Unlock()
 
@@ -149,10 +155,17 @@ func (s *AppServer) Start() error {
 
 func (s *AppServer) Shutdown() {
 	s.StopActiveDownload()
+	s.ytdlpUpdateMu.Lock()
+	ytCancel := s.ytdlpUpdateCancel
+	s.ytdlpUpdateMu.Unlock()
+	if ytCancel != nil {
+		ytCancel()
+	}
 
 	waitDone := make(chan struct{})
 	go func() {
 		s.downloadWG.Wait()
+		s.ytdlpUpdateWG.Wait()
 		close(waitDone)
 	}()
 	select {
@@ -178,7 +191,7 @@ func (s *AppServer) protectAPI(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		allowedHost := s.listenHost
-		baseURL := s.BaseURL
+		baseURL := s.baseURL
 		s.mu.Unlock()
 
 		if allowedHost != "" && !strings.EqualFold(r.Host, allowedHost) {
@@ -205,14 +218,20 @@ func (s *AppServer) protectAPI(next http.HandlerFunc) http.HandlerFunc {
 func (s *AppServer) GetInitState() map[string]interface{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	coreVer := s.tools.CoreVersion
+	if coreVer == "" {
+		coreVer = NativeHLSEngineVersion
+	}
 	return map[string]interface{}{
-		"config":        s.config,
-		"toolsReady":    s.toolsReady,
-		"toolsFailed":   s.toolsFailed,
-		"ffmpegVersion": s.tools.FFmpegVersion,
-		"ytdlpVersion":  s.tools.YtDlpVersion,
-		"activeEngine":  s.activeEngine,
-		"logs":          append([]LogEntry(nil), s.logs...),
+		"config":         s.config,
+		"toolsReady":     s.toolsReady,
+		"toolsFailed":    s.toolsFailed,
+		"ffmpegVersion":  s.tools.FFmpegVersion,
+		"coreVersion":    coreVer,
+		"ytdlpInstalled": s.tools.YtDlpPath != "",
+		"ytdlpVersion":   s.tools.YtDlpVersion,
+		"activeEngine":   s.activeEngine,
+		"logs":           append([]LogEntry(nil), s.logs...),
 	}
 }
 
@@ -249,6 +268,9 @@ func (s *AppServer) SetSaveDir(dir string) {
 }
 
 func (s *AppServer) SetToolsReady(info ToolInfo) {
+	if info.CoreVersion == "" {
+		info.CoreVersion = NativeHLSEngineVersion
+	}
 	s.mu.Lock()
 	s.tools = info
 	s.toolsReady = true
@@ -256,10 +278,12 @@ func (s *AppServer) SetToolsReady(info ToolInfo) {
 	s.mu.Unlock()
 
 	s.Broadcast("ready", map[string]interface{}{
-		"ready":         true,
-		"failed":        false,
-		"ffmpegVersion": info.FFmpegVersion,
-		"ytdlpVersion":  info.YtDlpVersion,
+		"ready":          true,
+		"failed":         false,
+		"ffmpegVersion":  info.FFmpegVersion,
+		"coreVersion":    info.CoreVersion,
+		"ytdlpInstalled": info.YtDlpPath != "",
+		"ytdlpVersion":   info.YtDlpVersion,
 	})
 }
 
@@ -390,7 +414,7 @@ func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 	s.activeTaskID++
 	myTaskID := s.activeTaskID
 
-	engine := "ytdlp"
+	engine := "hls"
 	if req.Engine == "ffmpeg" {
 		engine = "ffmpeg"
 	}
@@ -423,8 +447,8 @@ func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 		JA3:            req.JA3,
 		Akamai:         req.Akamai,
 		Concurrency:    DefaultConcurrency, // Always 1 thread
-		YtDlpPath:      tools.YtDlpPath,
 		FFmpegPath:     tools.FFmpegPath,
+		YtDlpPath:      tools.YtDlpPath,
 	}
 
 	go func() {
@@ -435,7 +459,9 @@ func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 
 		outPath, err := runFn(ctx, opts, DownloadCallbacks{
 			OnLog: func(tag, color, msg string) {
-				s.AddLog(tag, color, msg)
+				if s.isCurrentTask(myTaskID) {
+					s.AddLog(tag, color, msg)
+				}
 			},
 			OnProgress: func(p ProgressUpdate) {
 				if s.isCurrentTask(myTaskID) {
@@ -563,12 +589,99 @@ func (s *AppServer) handleStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
+func (s *AppServer) StartYtDlpUpdate() error {
+	s.ytdlpUpdateMu.Lock()
+	if s.ytdlpUpdating {
+		s.ytdlpUpdateMu.Unlock()
+		return errors.New("yt-dlp 正在安裝或更新中，請稍候完成")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ytdlpUpdating = true
+	s.ytdlpUpdateCancel = cancel
+	s.mu.Lock()
+	installFn := s.installYtDlpFn
+	s.mu.Unlock()
+	if installFn == nil {
+		installFn = InstallOrUpdateYtDlp
+	}
+	s.ytdlpUpdateWG.Add(1)
+	s.ytdlpUpdateMu.Unlock()
+
+	go func() {
+		defer func() {
+			cancel()
+			s.ytdlpUpdateMu.Lock()
+			s.ytdlpUpdating = false
+			s.ytdlpUpdateCancel = nil
+			s.ytdlpUpdateMu.Unlock()
+			s.ytdlpUpdateWG.Done()
+		}()
+
+		updated, err := installFn(ctx, s.AddLog)
+		if err != nil {
+			s.AddLog("[錯誤]", "#f87171", fmt.Sprintf("外部 YT-DLP 安裝/更新失敗: %v", err))
+			s.mu.Lock()
+			installed := s.tools.YtDlpPath != ""
+			version := s.tools.YtDlpVersion
+			s.mu.Unlock()
+			s.Broadcast("ytdlp_update_result", map[string]interface{}{
+				"ok":        false,
+				"installed": installed,
+				"version":   version,
+				"error":     err.Error(),
+			})
+			return
+		}
+
+		s.mu.Lock()
+		s.tools.YtDlpPath = updated.YtDlpPath
+		s.tools.YtDlpVersion = updated.YtDlpVersion
+		tools := s.tools
+		ready := s.toolsReady
+		failed := s.toolsFailed
+		s.mu.Unlock()
+
+		if ready {
+			s.Broadcast("ready", map[string]interface{}{
+				"ready":          true,
+				"failed":         failed,
+				"ffmpegVersion":  tools.FFmpegVersion,
+				"coreVersion":    tools.CoreVersion,
+				"ytdlpInstalled": tools.YtDlpPath != "",
+				"ytdlpVersion":   tools.YtDlpVersion,
+			})
+		}
+		s.Broadcast("ytdlp_update_result", map[string]interface{}{
+			"ok":        true,
+			"installed": tools.YtDlpPath != "",
+			"version":   tools.YtDlpVersion,
+		})
+	}()
+
+	return nil
+}
+
 func (s *AppServer) handleClearLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	s.ClearLogs()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (s *AppServer) handleYtDlpUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.StartYtDlpUpdate(); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"ok":    false,
+			"error": err.Error(),
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 

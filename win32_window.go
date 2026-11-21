@@ -989,6 +989,16 @@ func (a *DesktopApp) handleWebMessage(raw string) {
 		if a.server != nil {
 			a.server.StopActiveDownload()
 		}
+	case "update_ytdlp":
+		if a.server != nil {
+			if err := a.server.StartYtDlpUpdate(); err != nil {
+				b, _ := json.Marshal(map[string]interface{}{
+					"ok":    false,
+					"error": err.Error(),
+				})
+				a.EmitToWeb("ytdlp_update_result", string(b))
+			}
+		}
 	}
 }
 

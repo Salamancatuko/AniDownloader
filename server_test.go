@@ -17,7 +17,7 @@ import (
 func TestStartDownloadTaskInvalidURLDoesNotInterruptActive(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	srv := NewAppServer()
-	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", YtDlpVersion: "v2026.10.26"})
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
 
 	started := make(chan struct{})
 	cancelled := atomic.Bool{}
@@ -30,14 +30,14 @@ func TestStartDownloadTaskInvalidURLDoesNotInterruptActive(t *testing.T) {
 
 	if err := srv.StartDownloadTask(downloadRequest{
 		URL:    "https://example.com/live.m3u8",
-		Engine: "ytdlp",
+		Engine: "hls",
 	}); err != nil {
 		t.Fatalf("initial StartDownloadTask failed: %v", err)
 	}
 	<-started
 
 	for _, bad := range []string{"", "not-a-url", "ftp://example.com/a.m3u8", "https://example.com/a\r\nX:1"} {
-		if err := srv.StartDownloadTask(downloadRequest{URL: bad, Engine: "ytdlp"}); err == nil {
+		if err := srv.StartDownloadTask(downloadRequest{URL: bad, Engine: "hls"}); err == nil {
 			t.Fatalf("expected error for invalid URL %q", bad)
 		}
 	}
@@ -45,8 +45,8 @@ func TestStartDownloadTaskInvalidURLDoesNotInterruptActive(t *testing.T) {
 	if cancelled.Load() {
 		t.Fatal("invalid URL submission must NOT cancel active valid download")
 	}
-	if srv.ActiveEngine() != "ytdlp" {
-		t.Fatalf("ActiveEngine = %q, want ytdlp", srv.ActiveEngine())
+	if srv.ActiveEngine() != "hls" {
+		t.Fatalf("ActiveEngine = %q, want hls", srv.ActiveEngine())
 	}
 
 	srv.Shutdown()
@@ -58,7 +58,7 @@ func TestStartDownloadTaskInvalidURLDoesNotInterruptActive(t *testing.T) {
 func TestStartDownloadTaskRapidRestartTaskID(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	srv := NewAppServer()
-	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", YtDlpVersion: "v2026.10.26"})
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
 
 	var (
 		mu          sync.Mutex
@@ -102,7 +102,7 @@ func TestStartDownloadTaskRapidRestartTaskID(t *testing.T) {
 	for i := 1; i <= 6; i++ {
 		err := srv.StartDownloadTask(downloadRequest{
 			URL:    fmt.Sprintf("https://example.com/%d.m3u8", i),
-			Engine: "ytdlp",
+			Engine: "hls",
 			JA3:    "",
 			Akamai: "",
 		})
@@ -133,7 +133,7 @@ func TestStartDownloadTaskRapidRestartTaskID(t *testing.T) {
 	}
 	mu.Unlock()
 
-	if srv.ActiveEngine() != "ytdlp" {
+	if srv.ActiveEngine() != "hls" {
 		t.Fatalf("latest task should still be active, got %q", srv.ActiveEngine())
 	}
 
@@ -151,7 +151,7 @@ func TestStartDownloadTaskRapidRestartTaskID(t *testing.T) {
 func TestStartDownloadTaskConcurrentPreemptionNoOverlap(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	srv := NewAppServer()
-	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", YtDlpVersion: "v2026.10.26"})
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
 
 	var (
 		activeCount atomic.Int32
@@ -185,7 +185,7 @@ func TestStartDownloadTaskConcurrentPreemptionNoOverlap(t *testing.T) {
 			<-startGate
 			errs <- srv.StartDownloadTask(downloadRequest{
 				URL:    fmt.Sprintf("https://example.com/concurrent-%d.m3u8", idx),
-				Engine: "ytdlp",
+				Engine: "hls",
 			})
 		}(i)
 	}
@@ -222,7 +222,7 @@ func TestStartDownloadTaskConcurrentPreemptionNoOverlap(t *testing.T) {
 func TestShutdownWaitsForChildCleanup(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	srv := NewAppServer()
-	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", YtDlpVersion: "v2026.10.26"})
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
 
 	started := make(chan struct{})
 	cleaned := atomic.Bool{}
@@ -245,10 +245,10 @@ func TestShutdownWaitsForChildCleanup(t *testing.T) {
 	}
 }
 
-func TestStartDownloadTaskPreservesEmptyFingerprints(t *testing.T) {
+func TestStartDownloadTaskPreservesEmptyFingerprintsAndNormalizesLegacyEngine(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	srv := NewAppServer()
-	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", YtDlpVersion: "v2026.10.26"})
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
 
 	gotOpt := make(chan DownloadOptions, 1)
 	srv.runDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
@@ -269,6 +269,9 @@ func TestStartDownloadTaskPreservesEmptyFingerprints(t *testing.T) {
 	}
 
 	opt := <-gotOpt
+	if opt.Engine != "hls" {
+		t.Fatalf("expected legacy ytdlp engine to normalize to hls, got %q", opt.Engine)
+	}
 	if opt.JA3 != "" || opt.Akamai != "" || opt.UserAgent != "" {
 		t.Fatalf("expected empty request fingerprints not to be backfilled from config, got %+v", opt)
 	}
@@ -404,7 +407,7 @@ func TestHandleDownloadHTTPStatusMapping(t *testing.T) {
 	}
 
 	// 1. Before SetToolsReady -> 503 Service Unavailable
-	status, body := postDownload(`{"url":"https://example.com/live.m3u8","engine":"ytdlp"}`)
+	status, body := postDownload(`{"url":"https://example.com/live.m3u8","engine":"hls"}`)
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("POST /api/download before tools ready status = %d, want 503", status)
 	}
@@ -413,7 +416,26 @@ func TestHandleDownloadHTTPStatusMapping(t *testing.T) {
 	}
 
 	// Prepare ready tools and blocking stub downloader
-	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", YtDlpVersion: "v2026.10.26"})
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
+
+	initReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/init", nil)
+	initResp, err := client.Do(initReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initPayload struct {
+		CoreVersion   string `json:"coreVersion"`
+		FFmpegVersion string `json:"ffmpegVersion"`
+	}
+	if err := json.NewDecoder(initResp.Body).Decode(&initPayload); err != nil {
+		initResp.Body.Close()
+		t.Fatal(err)
+	}
+	initResp.Body.Close()
+	if initPayload.CoreVersion != NativeHLSEngineVersion || initPayload.FFmpegVersion != "v6.1.1" {
+		t.Fatalf("unexpected /api/init versions: %+v", initPayload)
+	}
+
 	started := make(chan struct{})
 	srv.runDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
 		close(started)
@@ -431,20 +453,162 @@ func TestHandleDownloadHTTPStatusMapping(t *testing.T) {
 	}
 
 	// 3. Valid download request -> 200 OK
-	status, body = postDownload(`{"url":"https://example.com/live.m3u8","engine":"ytdlp"}`)
+	status, body = postDownload(`{"url":"https://example.com/live.m3u8","engine":"hls"}`)
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("POST /api/download valid status = %d, body = %+v, want 200 ok=true", status, body)
 	}
 	<-started
 
-	// 4. Invalid URL while ytdlp is active -> 400 Bad Request with activeEngine="ytdlp"
+	// 4. Invalid URL while hls is active -> 400 Bad Request with activeEngine="hls"
 	status, body = postDownload(`{"url":"ftp://bad","engine":"ffmpeg"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("POST /api/download invalid URL status = %d, want 400", status)
 	}
-	if body.OK || body.Error == "" || body.ActiveEngine != "ytdlp" {
-		t.Fatalf("expected activeEngine=ytdlp on 400 error while running, got %+v", body)
+	if body.OK || body.Error == "" || body.ActiveEngine != "hls" {
+		t.Fatalf("expected activeEngine=hls on 400 error while running, got %+v", body)
 	}
 
 	srv.Shutdown()
+}
+
+func TestStartDownloadTaskFiltersStaleTaskLogs(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	srv := NewAppServer()
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
+
+	staleStarted := make(chan struct{})
+	releaseStale := make(chan struct{})
+	var callNum atomic.Int32
+	srv.runDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
+		n := callNum.Add(1)
+		if n == 1 {
+			close(staleStarted)
+			<-ctx.Done()
+			// Wait until second task becomes active, then emit stale log
+			<-releaseStale
+			cb.OnLog("[舊任務]", "#fbbf24", "stale task log should be dropped")
+			return "", context.Canceled
+		}
+		cb.OnLog("[新任務]", "#38bdf8", "current task log kept")
+		<-ctx.Done()
+		return "", context.Canceled
+	}
+
+	if err := srv.StartDownloadTask(downloadRequest{URL: "https://example.com/1.m3u8", Engine: "hls"}); err != nil {
+		t.Fatal(err)
+	}
+	<-staleStarted
+
+	// Launch task 2 while blocking task 1's OnLog emission via releaseStale after preemption starts
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		close(releaseStale)
+	}()
+	if err := srv.StartDownloadTask(downloadRequest{URL: "https://example.com/2.m3u8", Engine: "hls"}); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	srv.Shutdown()
+
+	state := srv.GetInitState()
+	logs, _ := state["logs"].([]LogEntry)
+	var sawNew bool
+	for _, entry := range logs {
+		if strings.Contains(entry.Message, "stale task log") {
+			t.Fatalf("stale task log leaked into active console logs: %+v", entry)
+		}
+		if strings.Contains(entry.Message, "current task log") {
+			sawNew = true
+		}
+	}
+	if !sawNew {
+		t.Fatalf("expected current task log to be recorded, got %+v", logs)
+	}
+}
+
+func TestServerInitStateYtDlpOptionalAndUpdateProtection(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	srv := NewAppServer()
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Shutdown()
+
+	// yt-dlp is strictly optional: toolsReady succeeds without yt-dlp.exe
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v6.1.1", CoreVersion: NativeHLSEngineVersion})
+
+	srv.mu.Lock()
+	baseURL := srv.baseURL
+	srv.mu.Unlock()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// 1. Check /api/init returns ytdlpInstalled=false, ytdlpVersion="", toolsReady=true
+	initReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/init", nil)
+	initResp, err := client.Do(initReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initBody struct {
+		ToolsReady     bool   `json:"toolsReady"`
+		YtDlpInstalled bool   `json:"ytdlpInstalled"`
+		YtDlpVersion   string `json:"ytdlpVersion"`
+	}
+	if err := json.NewDecoder(initResp.Body).Decode(&initBody); err != nil {
+		initResp.Body.Close()
+		t.Fatal(err)
+	}
+	initResp.Body.Close()
+	if !initBody.ToolsReady || initBody.YtDlpInstalled || initBody.YtDlpVersion != "" {
+		t.Fatalf("unexpected /api/init state without yt-dlp: %+v", initBody)
+	}
+
+	// 2. POST /api/ytdlp/update without X-Ani-Client: 1 must return 403 Forbidden
+	unauthReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/ytdlp/update", nil)
+	unauthResp, err := client.Do(unauthReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthResp.Body.Close()
+	if unauthResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("POST /api/ytdlp/update without X-Ani-Client status = %d, want 403", unauthResp.StatusCode)
+	}
+
+	// 3. POST /api/ytdlp/update with X-Ani-Client: 1 updates server tools state
+	doneCh := make(chan struct{})
+	srv.installYtDlpFn = func(ctx context.Context, logFn func(tag, color, msg string)) (ToolInfo, error) {
+		defer close(doneCh)
+		return ToolInfo{
+			CoreVersion:  NativeHLSEngineVersion,
+			YtDlpPath:    `C:\mock\yt-dlp.exe`,
+			YtDlpVersion: "2026.03.13",
+		}, nil
+	}
+
+	authReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/ytdlp/update", nil)
+	authReq.Header.Set("X-Ani-Client", "1")
+	authResp, err := client.Do(authReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authResp.Body.Close()
+	if authResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/ytdlp/update status = %d, want 200", authResp.StatusCode)
+	}
+
+	<-doneCh
+	// Wait briefly for StartYtDlpUpdate goroutine to store updated tools
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		state := srv.GetInitState()
+		if installed, _ := state["ytdlpInstalled"].(bool); installed {
+			if ver, _ := state["ytdlpVersion"].(string); ver != "2026.03.13" {
+				t.Fatalf("ytdlpVersion = %q, want 2026.03.13", ver)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for StartYtDlpUpdate to populate ytdlpInstalled=true")
 }
