@@ -434,6 +434,7 @@ func buildYtDlpArgs(opt DownloadOptions, rawTitle string) []string {
 		args = append(args, "--ffmpeg-location", filepath.Dir(opt.FFmpegPath))
 	}
 	args = append(args,
+		"--no-playlist",
 		"-N", strconv.Itoa(DefaultConcurrency),
 		"--no-quiet",
 		"--progress",

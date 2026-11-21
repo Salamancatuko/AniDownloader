@@ -441,6 +441,7 @@ func TestBuildYtDlpArgs(t *testing.T) {
 	}, "")
 
 	for _, required := range []string{
+		"--no-playlist",
 		"--no-quiet",
 		"--progress",
 		"--newline",
@@ -465,6 +466,9 @@ func TestBuildYtDlpArgs(t *testing.T) {
 		RefererEnabled: true,
 		UserAgent:      "Agent/1.0",
 	}, "MyEpisode")
+	if !slices.Contains(argsWithHeaders, "--no-playlist") {
+		t.Fatalf("RefererEnabled=true missing --no-playlist flag: %v", argsWithHeaders)
+	}
 	if !slices.Contains(argsWithHeaders, "--add-header") || !slices.Contains(argsWithHeaders, "--user-agent") {
 		t.Fatalf("RefererEnabled=true missing header flags: %v", argsWithHeaders)
 	}
