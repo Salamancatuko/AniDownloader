@@ -250,6 +250,7 @@ func (s *AppServer) UpdateConfig(incoming AppConfig) {
 	s.config.UserAgent = incoming.UserAgent
 	s.config.JA3 = incoming.JA3
 	s.config.Akamai = incoming.Akamai
+	s.config.BiliSessData = incoming.BiliSessData
 	cfgCopy := s.config
 	s.mu.Unlock()
 
@@ -366,6 +367,7 @@ type downloadRequest struct {
 	UserAgent      string `json:"userAgent"`
 	JA3            string `json:"ja3"`
 	Akamai         string `json:"akamai"`
+	BiliSessData   string `json:"biliSessData"`
 	Concurrency    int    `json:"concurrency"`
 }
 
@@ -446,6 +448,7 @@ func (s *AppServer) StartDownloadTask(req downloadRequest) error {
 		UserAgent:      req.UserAgent,
 		JA3:            req.JA3,
 		Akamai:         req.Akamai,
+		BiliSessData:   req.BiliSessData,
 		Concurrency:    DefaultConcurrency, // Always 1 thread
 		FFmpegPath:     tools.FFmpegPath,
 		YtDlpPath:      tools.YtDlpPath,

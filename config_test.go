@@ -236,3 +236,39 @@ func TestLoadConfigMigratesLegacyJA3AndPreservesCustomJA3(t *testing.T) {
 		}
 	})
 }
+
+func TestConfigBiliSessDataPersistence(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("LOCALAPPDATA", tmp)
+
+	if def := DefaultConfig(); def.BiliSessData != "" {
+		t.Fatalf("DefaultConfig().BiliSessData = %q, want empty", def.BiliSessData)
+	}
+
+	cfgPath := getConfigPath()
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Legacy config.json without biliSessData defaults to empty string
+	if err := os.WriteFile(cfgPath, []byte(`{"lang":"zh-TW","opacity":48}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := LoadConfig(); loaded.BiliSessData != "" {
+		t.Fatalf("missing biliSessData should load as empty, got %q", loaded.BiliSessData)
+	}
+
+	// Non-empty BiliSessData persists across SaveConfig / LoadConfig
+	cfg := DefaultConfig()
+	cfg.BiliSessData = "abc%2C123%2Csecret"
+	SaveConfig(cfg)
+	if loaded := LoadConfig(); loaded.BiliSessData != "abc%2C123%2Csecret" {
+		t.Fatalf("persisted BiliSessData = %q, want abc%%2C123%%2Csecret", loaded.BiliSessData)
+	}
+
+	// Clearing BiliSessData persists as empty string
+	cfg.BiliSessData = ""
+	SaveConfig(cfg)
+	if loaded := LoadConfig(); loaded.BiliSessData != "" {
+		t.Fatalf("cleared BiliSessData = %q, want empty", loaded.BiliSessData)
+	}
+}

@@ -373,6 +373,7 @@ type webMsg struct {
 	UserAgent      string     `json:"userAgent,omitempty"`
 	JA3            string     `json:"ja3,omitempty"`
 	Akamai         string     `json:"akamai,omitempty"`
+	BiliSessData   string     `json:"biliSessData,omitempty"`
 	Concurrency    int        `json:"concurrency,omitempty"`
 	Content        string     `json:"content,omitempty"`
 }
@@ -963,6 +964,7 @@ func (a *DesktopApp) handleWebMessage(raw string) {
 				UserAgent:      m.UserAgent,
 				JA3:            m.JA3,
 				Akamai:         m.Akamai,
+				BiliSessData:   m.BiliSessData,
 				Concurrency:    DefaultConcurrency,
 			}
 			go func() {

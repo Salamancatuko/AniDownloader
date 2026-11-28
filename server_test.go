@@ -612,3 +612,73 @@ func TestServerInitStateYtDlpOptionalAndUpdateProtection(t *testing.T) {
 	}
 	t.Fatal("timed out waiting for StartYtDlpUpdate to populate ytdlpInstalled=true")
 }
+
+func TestServerBiliSessDataConfigAndDownloadPassThrough(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	srv := NewAppServer()
+	srv.SetToolsReady(ToolInfo{FFmpegVersion: "v7.1.1", CoreVersion: NativeHLSEngineVersion})
+	defer srv.Shutdown()
+
+	srv.UpdateConfig(AppConfig{
+		Lang:           "zh-TW",
+		Opacity:        48,
+		RefererEnabled: true,
+		SaveDir:        t.TempDir(),
+		UserAgent:      DefaultUserAgent,
+		Akamai:         DefaultAkamai,
+		BiliSessData:   "bili_cookie_secret_1",
+	})
+
+	state := srv.GetInitState()
+	cfg, ok := state["config"].(AppConfig)
+	if !ok {
+		t.Fatalf("GetInitState config type = %T, want AppConfig", state["config"])
+	}
+	if cfg.BiliSessData != "bili_cookie_secret_1" {
+		t.Fatalf("GetInitState config.BiliSessData = %q, want bili_cookie_secret_1", cfg.BiliSessData)
+	}
+
+	gotOpt := make(chan DownloadOptions, 2)
+	srv.runDownloadFn = func(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks) (string, error) {
+		gotOpt <- opt
+		return "out.mp4", nil
+	}
+
+	if err := srv.StartDownloadTask(downloadRequest{
+		URL:            "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
+		Engine:         "hls",
+		RefererEnabled: true,
+		BiliSessData:   "req_sess_2",
+	}); err != nil {
+		t.Fatalf("StartDownloadTask failed: %v", err)
+	}
+
+	select {
+	case opt := <-gotOpt:
+		if opt.BiliSessData != "req_sess_2" {
+			t.Fatalf("DownloadOptions.BiliSessData = %q, want req_sess_2", opt.BiliSessData)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for StartDownloadTask DownloadOptions")
+	}
+
+	// Verify desktop WebView2 message pass-through does not drop BiliSessData
+	app := &DesktopApp{server: srv}
+	app.handleWebMessage(`{"action":"download","url":"https://www.bilibili.com/video/BV1xx411c7mD?p=2","engine":"hls","refererEnabled":true,"biliSessData":"webview_sess_3"}`)
+
+	select {
+	case opt := <-gotOpt:
+		if opt.BiliSessData != "webview_sess_3" {
+			t.Fatalf("desktop handleWebMessage BiliSessData = %q, want webview_sess_3", opt.BiliSessData)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handleWebMessage DownloadOptions")
+	}
+
+	// Clearing BiliSessData via UpdateConfig persists empty string
+	srv.UpdateConfig(AppConfig{Lang: "zh-TW", Opacity: 48, BiliSessData: ""})
+	clearedCfg := srv.GetInitState()["config"].(AppConfig)
+	if clearedCfg.BiliSessData != "" {
+		t.Fatalf("cleared BiliSessData = %q, want empty", clearedCfg.BiliSessData)
+	}
+}

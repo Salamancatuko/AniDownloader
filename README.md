@@ -1,15 +1,16 @@
-# AniDownloader (巴哈姆特動畫瘋 m3u8 / 混合串流下載器)
+# AniDownloader v2.0.0 (巴哈姆特動畫瘋 m3u8 / 混合串流下載器)
 
 ## 核心架構與特色
 
 1. **三段式混合下載架構**
    - **原生 `HLS-CORE` (`v2.0.0`)**：純 Go 原生 HLS 下載引擎，透過 `azuretls-client` 模擬 Chrome TLS (JA3) 與 HTTP/2 (Akamai) 指紋，支援 Master/Media M3U8 解析、AES-128 解密與強制單線程並發 (`CONCURRENCY = 1`)，搭配內嵌極簡 FFmpeg 無損封裝為 `.mp4`。
    - **內嵌極簡靜態 `FFMPEG` (`v7.1.1`，LGPL)**：以 MSYS2 MINGW64 純靜態組態編譯（採用 Windows 原生 Schannel TLS 與 w32threads，零外部 DLL 依賴），`bin_embed/ffmpeg.exe.gz` 壓縮體積僅約 **1.4 MiB**，首次啟動於 **0.2 秒內**解壓至 `%LOCALAPPDATA%\AniDownloader\bin`，並內建 SHA-256 自動比對與版本更新替換機制（亦可於程式同目錄或 `bin\` 子目錄放置自訂 `ffmpeg.exe` 覆蓋）。
-   - **可選按需外部 `YT-DLP`**：主程式不內嵌 `yt-dlp.exe`（大幅縮減執行檔體積並避免誤報）；需要下載 YouTube 等一般影片網頁時，可至 **Settings -> 外部網頁引擎 (YT-DLP)** 一鍵從官方 GitHub Release 下載安裝或更新，並由內嵌極簡 FFmpeg 完成視音訊雙軌合併與 MP4 封裝。
+   - **可選按需外部 `YT-DLP`**：主程式不內嵌 `yt-dlp.exe`（大幅縮減執行檔體積並避免誤報）；需要下載 **Bilibili（B 站）**、**YouTube** 等一般影片網頁時，可至 **Settings -> 外部網頁引擎 (YT-DLP)** 一鍵從官方 GitHub Release 下載安裝或更新，預設強制單集單線程（`--no-playlist`、`-N 1`，貼上多 P `?p=N` 或清單連結僅精準下載當前單集），並由內嵌極簡 FFmpeg 完成合併與 MP4 封裝。B 站另支援於 Settings 填入可選 `SESSDATA` 憑證解鎖 1080P / 4K 高畫質（僅於系統暫存區建立 `0600` 臨時 Cookie 檔並於任務結束後立即銷毀，全程零明文紀錄）。
 
-2. **自帶防盜鏈標頭與 TLS / HTTP2 指紋自訂**
-   - 開啟防盜鏈標頭時，自動注入巴哈姆特動畫瘋所需的 `Origin`、`Referer` 與 `User-Agent`。
-   - 可於 **Settings** 頁面自訂 `User-Agent`、`JA3` 與 `Akamai` 指紋（留空即使用內建 Chrome TLS 指紋）。
+2. **自帶防盜鏈標頭、第三方自動隔離與 TLS / HTTP2 指紋自訂**
+   - 針對巴哈姆特動畫瘋 `.m3u8` 串流，開啟防盜鏈標頭時會自動注入 `Origin`、`Referer` 與 `User-Agent`。
+   - 下載第三方影音平台（如 Bilibili、YouTube 等）時，即使主介面保持「防盜鏈標頭 ON」，系統也會自動隔離巴哈 `Origin` / `Referer` 標頭，無需手動切換且避免觸發跨站 `403`。
+   - 可於 **Settings** 頁面自訂 `User-Agent`、`JA3` 與 `Akamai` 指紋（留空即使用內建 Chrome TLS 指紋），以及填寫／顯隱切換 B 站 `SESSDATA`。
    - 提供視覺化 **ON / OFF 開關**，點擊執行中卡片即可優雅中止任務並清理子程序。
 
 3. **單一執行檔開箱即用**
@@ -24,9 +25,14 @@
 2. 貼入連結、輸入自訂影片標題（選填）與儲存目錄，保持 **防盜鏈標頭為 ON**。
 3. 點擊 **原生 HLS 指紋下載**（推薦）或 **FFMPEG 直接轉錄** 卡片即可開始下載。
 
-### YouTube / 一般影片網頁
+### Bilibili（B 站單集下載）
 1. 首次使用請至 **Settings -> 外部網頁引擎 (YT-DLP)** 點擊「下載安裝」取得官方 `yt-dlp.exe`（亦可自行將 `yt-dlp.exe` 放至主程式目錄或系統 `PATH`）。
-2. 貼上影片網頁 URL，將 **防盜鏈標頭切換為 OFF**，點擊 **原生 HLS 指紋下載** 卡片即會自動路由至外部 `YT-DLP` 下載並由內嵌 `FFmpeg` 合併輸出 `.mp4`。
+2. 如需下載 1080P / 1080P60 / 4K 畫質，可於 **Settings** 的 `B 站 SESSDATA` 欄位貼入瀏覽器 Cookie 中的 `SESSDATA` 值（留空亦可正常下載遊客畫質 360P / 480P）。
+3. 貼上 B 站影片連結（支援 `bilibili.com/video/BV...`、多 P 指定單集 `?p=2` 及 `b23.tv` 短鏈），無需關閉防盜鏈開關（系統會自動隔離巴哈標頭），點擊 **原生 HLS 指紋下載** 卡片即會自動採用 MP4 / AAC 友善格式排序並封裝輸出 `.mp4`。
+
+### YouTube / 一般影片網頁
+1. 首次使用請至 **Settings -> 外部網頁引擎 (YT-DLP)** 點擊「下載安裝」取得官方 `yt-dlp.exe`。
+2. 貼上影片網頁 URL（無需手動關閉防盜鏈開關，系統會自動隔離巴哈標頭；貼上含播放清單參數之網址亦只會精準下載當前單支影片），點擊 **原生 HLS 指紋下載** 卡片即會自動路由至外部 `YT-DLP` 下載並由內嵌 `FFmpeg` 合併輸出 `.mp4`。
 3. **YouTube 畫質與播放器相容性說明**：下載預設保留平台提供的最佳畫質組合（例如 AV1 / VP9 / H.264 視訊搭配 Opus / AAC 音訊封裝於 `.mp4`）。若 Windows 內建舊版播放器無法解碼 AV1 或 Opus 音軌，建議改用 **VLC**、**MPV**、**PotPlayer**，或於 Microsoft Store 安裝 **AV1 Video Extension** 觀看。
 
 ---

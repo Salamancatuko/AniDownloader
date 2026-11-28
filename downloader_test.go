@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -339,7 +341,7 @@ func TestRunDownloadHybridRoutingYouTube(t *testing.T) {
 		t.Fatalf("outPath = %q, want Mock Video.mp4", outPath)
 	}
 
-	args := buildYtDlpArgs(capturedOpt, capturedRawTit)
+	args := buildYtDlpArgs(capturedOpt, capturedRawTit, "")
 	for _, forbidden := range []string{"--add-header", "--referer", "--user-agent"} {
 		if slices.Contains(args, forbidden) {
 			t.Fatalf("RefererEnabled=false must NOT attach %s in args: %v", forbidden, args)
@@ -438,7 +440,7 @@ func TestBuildYtDlpArgs(t *testing.T) {
 		OutputDir:      outDir,
 		RefererEnabled: false,
 		FFmpegPath:     filepath.Join(outDir, "ffmpeg.exe"),
-	}, "")
+	}, "", "")
 
 	for _, required := range []string{
 		"--no-playlist",
@@ -465,7 +467,7 @@ func TestBuildYtDlpArgs(t *testing.T) {
 		OutputDir:      outDir,
 		RefererEnabled: true,
 		UserAgent:      "Agent/1.0",
-	}, "MyEpisode")
+	}, "MyEpisode", "")
 	if !slices.Contains(argsWithHeaders, "--no-playlist") {
 		t.Fatalf("RefererEnabled=true missing --no-playlist flag: %v", argsWithHeaders)
 	}
@@ -644,4 +646,244 @@ func TestParseYtDlpOutputLine(t *testing.T) {
 			t.Fatalf("expected [錯誤] classification, got %v", loggedMsgs)
 		}
 	})
+}
+
+func TestIsBilibiliURL(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{url: "https://www.bilibili.com/video/BV1xx411c7mD?p=2", want: true},
+		{url: "https://m.bilibili.com/video/BV1xx", want: true},
+		{url: "https://bangumi.bilibili.com/anime/12345", want: true},
+		{url: "https://b23.tv/abc123", want: true},
+		{url: "https://www.youtube.com/watch?v=xxx", want: false},
+		{url: "https://ani.gamer.com.tw/", want: false},
+		{url: "https://evil-bilibili.com/video/1", want: false},
+		{url: "https://example.com/bilibili.com/video/1", want: false},
+		{url: "", want: false},
+	}
+	for _, tc := range cases {
+		if got := isBilibiliURL(tc.url); got != tc.want {
+			t.Errorf("isBilibiliURL(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+
+	if !isLikelyWebpageURL("https://b23.tv/abc123") {
+		t.Fatal("expected b23.tv short URL to be treated as webpage URL")
+	}
+	if isLikelyWebpageURL("https://www.bilibili.com/live/playlist.m3u8") {
+		t.Fatal("explicit .m3u8 on bilibili host must stay on native HLS path")
+	}
+}
+
+func TestSanitizeBiliSessData(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "pure value", in: "  abc%2C123%2Cxyz  ", want: "abc%2C123%2Cxyz"},
+		{name: "uppercase prefix", in: "SESSDATA=abc%2C123", want: "abc%2C123"},
+		{name: "lowercase prefix", in: "sessdata=abc%2C123", want: "abc%2C123"},
+		{name: "devtools cookie line", in: `SESSDATA="abc%2C123"; Path=/; HttpOnly`, want: "abc%2C123"},
+		{name: "single quoted cookie", in: `SESSDATA='abc%2C123'; Domain=.bilibili.com`, want: "abc%2C123"},
+		{name: "crlf nul tab injection", in: "SESSDATA=abc\r\n\t%2C123\x00; Path=/", want: "abc%2C123"},
+		{name: "empty", in: "", want: ""},
+		{name: "whitespace only", in: " \r\n\t ", want: ""},
+		{name: "empty after prefix and semicolon", in: "SESSDATA= ; Path=/", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeBiliSessData(tc.in); got != tc.want {
+				t.Fatalf("sanitizeBiliSessData(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCreateTempBiliCookieFile(t *testing.T) {
+	for _, emptyIn := range []string{"", "   ", "SESSDATA= ; Path=/"} {
+		path, err := createTempBiliCookieFile(emptyIn)
+		if err != nil || path != "" {
+			if path != "" {
+				_ = os.Remove(path)
+			}
+			t.Fatalf("createTempBiliCookieFile(%q) = (%q, %v), want empty path and nil error", emptyIn, path, err)
+		}
+	}
+
+	beforeUnix := time.Now().Unix()
+	cookiePath, err := createTempBiliCookieFile(`SESSDATA="abc%2C123"; Path=/; HttpOnly`)
+	if err != nil {
+		t.Fatalf("createTempBiliCookieFile failed: %v", err)
+	}
+	if cookiePath == "" {
+		t.Fatal("expected non-empty cookiePath")
+	}
+	defer os.Remove(cookiePath)
+
+	raw, err := os.ReadFile(cookiePath)
+	if err != nil {
+		t.Fatalf("failed to read generated cookie file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines in Netscape cookie file, got %d:\n%s", len(lines), string(raw))
+	}
+	if lines[0] != "# Netscape HTTP Cookie File" {
+		t.Fatalf("unexpected Netscape header: %q", lines[0])
+	}
+	cols := strings.Split(lines[1], "\t")
+	if len(cols) != 7 {
+		t.Fatalf("expected 7 tab-separated Netscape cookie columns, got %d: %q", len(cols), lines[1])
+	}
+	if cols[0] != ".bilibili.com" || cols[1] != "TRUE" || cols[2] != "/" || cols[3] != "TRUE" || cols[5] != "SESSDATA" || cols[6] != "abc%2C123" {
+		t.Fatalf("unexpected Netscape cookie columns: %v", cols)
+	}
+	expires, err := strconv.ParseInt(cols[4], 10, 64)
+	if err != nil || expires <= beforeUnix {
+		t.Fatalf("cookie expiration %q must be > %d (err=%v)", cols[4], beforeUnix, err)
+	}
+}
+
+func TestBuildYtDlpArgsBilibiliAndIsolation(t *testing.T) {
+	outDir := t.TempDir()
+	cookiePath := filepath.Join(outDir, "bili_cookie.txt")
+
+	hasFlagPair := func(args []string, flag, value string) bool {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == flag && args[i+1] == value {
+				return true
+			}
+		}
+		return false
+	}
+	containsSubstring := func(args []string, substr string) bool {
+		for _, a := range args {
+			if strings.Contains(a, substr) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 1. Bilibili URL with RefererEnabled=true and cookie file
+	biliArgs := buildYtDlpArgs(DownloadOptions{
+		M3U8Url:        "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
+		OutputDir:      outDir,
+		RefererEnabled: true,
+		UserAgent:      "CustomUA/1.0",
+		FFmpegPath:     filepath.Join(outDir, "ffmpeg.exe"),
+	}, "", cookiePath)
+
+	if slices.Contains(biliArgs, "--add-header") || slices.Contains(biliArgs, "--user-agent") || containsSubstring(biliArgs, "ani.gamer.com.tw") {
+		t.Fatalf("Bilibili task must isolate Bahamut headers, got %v", biliArgs)
+	}
+	if !hasFlagPair(biliArgs, "--cookies", cookiePath) {
+		t.Fatalf("expected --cookies %q in %v", cookiePath, biliArgs)
+	}
+	if !slices.Contains(biliArgs, "--no-playlist") {
+		t.Fatalf("expected --no-playlist in %v", biliArgs)
+	}
+	if !hasFlagPair(biliArgs, "-S", "res,fps,acodec:aac,ext:mp4:m4a") {
+		t.Fatalf("expected Bilibili format sort in %v", biliArgs)
+	}
+
+	// 2. YouTube URL with RefererEnabled=true
+	ytArgs := buildYtDlpArgs(DownloadOptions{
+		M3U8Url:        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		OutputDir:      outDir,
+		RefererEnabled: true,
+		UserAgent:      "CustomUA/1.0",
+	}, "", "")
+
+	if slices.Contains(ytArgs, "--add-header") || slices.Contains(ytArgs, "--user-agent") || containsSubstring(ytArgs, "ani.gamer.com.tw") {
+		t.Fatalf("YouTube task must isolate Bahamut headers, got %v", ytArgs)
+	}
+	if slices.Contains(ytArgs, "--cookies") || slices.Contains(ytArgs, "-S") {
+		t.Fatalf("YouTube task must not include Bilibili --cookies or -S sort, got %v", ytArgs)
+	}
+	if !slices.Contains(ytArgs, "--no-playlist") {
+		t.Fatalf("expected --no-playlist for YouTube in %v", ytArgs)
+	}
+
+	// 3. Non-third-party webpage URL with RefererEnabled=true keeps anti-leech headers
+	for _, targetURL := range []string{
+		"https://ani.gamer.com.tw/animeVideo.php?sn=12345",
+		"https://custom-site.example.org/watch?v=99",
+	} {
+		args := buildYtDlpArgs(DownloadOptions{
+			M3U8Url:        targetURL,
+			OutputDir:      outDir,
+			RefererEnabled: true,
+			UserAgent:      "CustomUA/1.0",
+		}, "", "")
+		if !hasFlagPair(args, "--add-header", "Origin: "+AnimeOrigin) ||
+			!hasFlagPair(args, "--add-header", "Referer: "+AnimeReferer) ||
+			!hasFlagPair(args, "--user-agent", "CustomUA/1.0") {
+			t.Fatalf("non-third-party URL %q must retain Bahamut anti-leech headers, got %v", targetURL, args)
+		}
+		if slices.Contains(args, "--cookies") || slices.Contains(args, "-S") {
+			t.Fatalf("non-third-party URL %q must not include Bilibili flags, got %v", targetURL, args)
+		}
+	}
+}
+
+func TestRunExternalYtDlpBilibiliCookieCleanupAndNoSecretLeak(t *testing.T) {
+	isoTmp := t.TempDir()
+	t.Setenv("TEMP", isoTmp)
+	t.Setenv("TMP", isoTmp)
+
+	stubYt := filepath.Join(t.TempDir(), "yt-dlp.exe")
+	if err := os.WriteFile(stubYt, []byte("not-a-valid-pe-executable"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	const rawSecret = "super_secret_sessdata_token_987"
+	var logs []string
+	_, err := runExternalYtDlp(context.Background(), DownloadOptions{
+		M3U8Url:        "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
+		OutputDir:      t.TempDir(),
+		RefererEnabled: true,
+		BiliSessData:   fmt.Sprintf(`SESSDATA="%s"; Path=/; HttpOnly`, rawSecret),
+		YtDlpPath:      stubYt,
+	}, "", DownloadCallbacks{
+		OnLog: func(tag, _, msg string) {
+			logs = append(logs, tag+" "+msg)
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error starting invalid stub yt-dlp.exe")
+	}
+	if strings.Contains(err.Error(), rawSecret) || strings.Contains(err.Error(), "SESSDATA=") {
+		t.Fatalf("returned error leaked secret credential: %v", err)
+	}
+
+	var sawIsolationLog, sawCredLog bool
+	for _, entry := range logs {
+		if strings.Contains(entry, rawSecret) {
+			t.Fatalf("console log leaked plaintext SESSDATA: %q", entry)
+		}
+		if strings.Contains(entry, "[路由]") && strings.Contains(entry, "已自動隔離巴哈防盜鏈標頭") {
+			sawIsolationLog = true
+		}
+		if strings.Contains(entry, "[憑證]") && strings.Contains(entry, "臨時憑證") {
+			sawCredLog = true
+		}
+	}
+	if !sawIsolationLog {
+		t.Fatalf("expected third-party header isolation log, got %v", logs)
+	}
+	if !sawCredLog {
+		t.Fatalf("expected masked Bilibili credential log, got %v", logs)
+	}
+
+	leftovers, globErr := filepath.Glob(filepath.Join(isoTmp, "anidl_bili_cookie_*.txt"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("temporary Bilibili cookie file was not cleaned up: %v", leftovers)
+	}
 }

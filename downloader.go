@@ -59,6 +59,20 @@ var (
 		"ani.gamer.com.tw",
 	}
 
+	thirdPartyVideoDomains = []string{
+		"bilibili.com",
+		"b23.tv",
+		"youtube.com",
+		"youtu.be",
+		"twitch.tv",
+		"nicovideo.jp",
+		"twitter.com",
+		"x.com",
+		"tiktok.com",
+		"vimeo.com",
+		"dailymotion.com",
+	}
+
 	runExternalYtDlpFn = runExternalYtDlp
 )
 
@@ -148,6 +162,7 @@ type DownloadOptions struct {
 	UserAgent      string
 	JA3            string
 	Akamai         string
+	BiliSessData   string
 	Concurrency    int
 	FFmpegPath     string
 	YtDlpPath      string
@@ -186,6 +201,36 @@ func buildFFmpegArgs(opt DownloadOptions, ua, outFilePath string) []string {
 	return args
 }
 
+func parseLowerHostname(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed == nil || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Hostname())
+}
+
+func hostMatchesDomain(host, domain string) bool {
+	return host != "" && (host == domain || strings.HasSuffix(host, "."+domain))
+}
+
+func isBilibiliURL(rawURL string) bool {
+	host := parseLowerHostname(rawURL)
+	return hostMatchesDomain(host, "bilibili.com") || hostMatchesDomain(host, "b23.tv")
+}
+
+func isThirdPartyVideoSite(rawURL string) bool {
+	host := parseLowerHostname(rawURL)
+	if host == "" {
+		return false
+	}
+	for _, domain := range thirdPartyVideoDomains {
+		if hostMatchesDomain(host, domain) {
+			return true
+		}
+	}
+	return false
+}
+
 // isLikelyWebpageURL returns true if rawURL targets a known video platform webpage
 // rather than an explicit .m3u8/.m3u playlist path.
 func isLikelyWebpageURL(rawURL string) bool {
@@ -197,9 +242,12 @@ func isLikelyWebpageURL(rawURL string) bool {
 	if strings.Contains(pathLower, ".m3u8") || strings.Contains(pathLower, ".m3u") {
 		return false
 	}
+	if isBilibiliURL(rawURL) {
+		return true
+	}
 	host := strings.ToLower(parsed.Hostname())
 	for _, domain := range knownWebpageDomains {
-		if host == domain || strings.HasSuffix(host, "."+domain) {
+		if hostMatchesDomain(host, domain) {
 			return true
 		}
 	}
@@ -407,6 +455,57 @@ func RunDownload(ctx context.Context, opt DownloadOptions, cb DownloadCallbacks)
 	return outFilePath, nil
 }
 
+func sanitizeBiliSessData(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		if r == '\r' || r == '\n' || r == '\x00' || r == '\t' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	s := strings.TrimSpace(b.String())
+	if len(s) >= len("SESSDATA=") && strings.EqualFold(s[:len("SESSDATA=")], "SESSDATA=") {
+		s = strings.TrimSpace(s[len("SESSDATA="):])
+	}
+	if idx := strings.IndexByte(s, ';'); idx >= 0 {
+		s = s[:idx]
+	}
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'`)
+	return strings.TrimSpace(s)
+}
+
+func createTempBiliCookieFile(rawSessData string) (string, error) {
+	clean := sanitizeBiliSessData(rawSessData)
+	if clean == "" {
+		return "", nil
+	}
+
+	f, err := os.CreateTemp("", "anidl_bili_cookie_*.txt")
+	if err != nil {
+		return "", fmt.Errorf("建立 B 站臨時 Cookie 檔失敗: %w", err)
+	}
+	tmpPath := f.Name()
+	cleanup := func() {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+	}
+
+	_ = f.Chmod(0600)
+	expires := time.Now().Add(365 * 24 * time.Hour).Unix()
+	content := fmt.Sprintf("# Netscape HTTP Cookie File\n.bilibili.com\tTRUE\t/\tTRUE\t%d\tSESSDATA\t%s\n", expires, clean)
+	if _, err := io.WriteString(f, content); err != nil {
+		cleanup()
+		return "", fmt.Errorf("寫入 B 站臨時 Cookie 檔失敗: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("關閉 B 站臨時 Cookie 檔失敗: %w", err)
+	}
+	return tmpPath, nil
+}
+
 func buildYtDlpOutTemplate(outputDir, rawTitle string) string {
 	if strings.TrimSpace(rawTitle) != "" {
 		return filepath.Join(outputDir, SanitizeFilename(rawTitle)+".%(ext)s")
@@ -414,14 +513,15 @@ func buildYtDlpOutTemplate(outputDir, rawTitle string) string {
 	return filepath.Join(outputDir, "%(title).120B.%(ext)s")
 }
 
-func buildYtDlpArgs(opt DownloadOptions, rawTitle string) []string {
+func buildYtDlpArgs(opt DownloadOptions, rawTitle, cookieFile string) []string {
 	ua := sanitizeHeaderValue(opt.UserAgent)
 	if ua == "" {
 		ua = DefaultUserAgent
 	}
 
-	args := make([]string, 0, 26)
-	if opt.RefererEnabled {
+	attachAnimeHeaders := opt.RefererEnabled && !isThirdPartyVideoSite(opt.M3U8Url)
+	args := make([]string, 0, 32)
+	if attachAnimeHeaders {
 		args = append(args,
 			"--add-header", "Origin: "+AnimeOrigin,
 			"--add-header", "Referer: "+AnimeReferer,
@@ -432,6 +532,12 @@ func buildYtDlpArgs(opt DownloadOptions, rawTitle string) []string {
 	args = append(args, "--encoding", "utf-8")
 	if strings.TrimSpace(opt.FFmpegPath) != "" {
 		args = append(args, "--ffmpeg-location", filepath.Dir(opt.FFmpegPath))
+	}
+	if strings.TrimSpace(cookieFile) != "" {
+		args = append(args, "--cookies", cookieFile)
+	}
+	if isBilibiliURL(opt.M3U8Url) {
+		args = append(args, "-S", "res,fps,acodec:aac,ext:mp4:m4a")
 	}
 	args = append(args,
 		"--no-playlist",
@@ -597,8 +703,27 @@ func runExternalYtDlp(ctx context.Context, opt DownloadOptions, rawTitle string,
 		return "", errors.New("此連結為影片網頁（如 YouTube），需搭配外部 yt-dlp.exe 解析；請至 Settings 點擊「安裝 / 更新 YT-DLP」，或將 yt-dlp.exe 放至程式目錄。")
 	}
 
+	attachAnimeHeaders := opt.RefererEnabled && !isThirdPartyVideoSite(opt.M3U8Url)
+	if opt.RefererEnabled && !attachAnimeHeaders {
+		cb.OnLog("[路由]", "#38bdf8", "目標為第三方影音平台，已自動隔離巴哈防盜鏈標頭（交由 YT-DLP 處理）")
+	}
+
+	var cookieFile string
+	if isBilibiliURL(opt.M3U8Url) && sanitizeBiliSessData(opt.BiliSessData) != "" {
+		var cookieErr error
+		cookieFile, cookieErr = createTempBiliCookieFile(opt.BiliSessData)
+		if cookieErr != nil {
+			cb.OnLog("[錯誤]", "#f87171", cookieErr.Error())
+			return "", cookieErr
+		}
+		if cookieFile != "" {
+			defer os.Remove(cookieFile)
+			cb.OnLog("[憑證]", "#38bdf8", "已附加 B 站 SESSDATA 臨時憑證（任務結束後自動銷毀）")
+		}
+	}
+
 	headerDesc := "--no-headers"
-	if opt.RefererEnabled {
+	if attachAnimeHeaders {
 		ua := sanitizeHeaderValue(opt.UserAgent)
 		if ua == "" {
 			ua = DefaultUserAgent
@@ -607,7 +732,7 @@ func runExternalYtDlp(ctx context.Context, opt DownloadOptions, rawTitle string,
 	}
 	cb.OnLog("[提示]", "#38bdf8", fmt.Sprintf("啟動外部混合引擎 [YT-DLP] | threads=%d | %s", DefaultConcurrency, headerDesc))
 
-	args := buildYtDlpArgs(opt, rawTitle)
+	args := buildYtDlpArgs(opt, rawTitle, cookieFile)
 	cmd := exec.Command(ytPath, args...)
 	cmd.Env = buildYtDlpEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{

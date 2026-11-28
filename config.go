@@ -27,6 +27,7 @@ type AppConfig struct {
 	UserAgent      string `json:"userAgent"`
 	JA3            string `json:"ja3"`
 	Akamai         string `json:"akamai"`
+	BiliSessData   string `json:"biliSessData"`
 }
 
 func getConfigPath() string {
@@ -46,6 +47,7 @@ func DefaultConfig() AppConfig {
 		UserAgent:      DefaultUserAgent,
 		JA3:            DefaultJA3,
 		Akamai:         DefaultAkamai,
+		BiliSessData:   "",
 	}
 }
 

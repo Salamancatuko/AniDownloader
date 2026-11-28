@@ -401,7 +401,27 @@
     }
 
     #tab-settings {
-      gap: 10px;
+      gap: 9px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+
+    #tab-settings::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    #tab-settings::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 999px;
+    }
+
+    #tab-settings::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+    }
+
+    #tab-settings::-webkit-scrollbar-thumb:hover {
+      background: rgba(56, 189, 248, 0.48);
     }
 
     #tab-console {
@@ -1140,6 +1160,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      flex-shrink: 0;
     }
 
     .settings-box-header {
@@ -1210,10 +1231,38 @@
       gap: 8px;
     }
 
-    .settings-ytdlp-bar {
-      height: 42px;
-      padding: 0 14px;
+    .settings-box.settings-ytdlp-bar {
+      height: auto;
+      padding: 10px 14px;
+      gap: 7px;
       border-radius: 11px;
+      flex-shrink: 0;
+    }
+
+    .settings-bili-row {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .settings-secret-well {
+      height: 32px;
+      padding: 0 6px 0 11px;
+      gap: 6px;
+    }
+
+    .settings-secret-well input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .secret-toggle-btn {
+      position: relative;
+      z-index: 2;
+      flex-shrink: 0;
+      white-space: nowrap;
     }
 
     .settings-ytdlp-left {
@@ -1749,14 +1798,36 @@
               </div>
             </div>
 
-            <!-- Card 3: Optional External YT-DLP Webpage Extension -->
-            <div class="liquid-surface toggle-bar settings-ytdlp-bar liquid-trackable">
-              <div class="settings-ytdlp-left">
-                <span class="field-label-bright" id="lblSetYtDlp">外部網頁引擎 (YT-DLP)</span>
-                <span class="settings-link-badge is-off" id="ytdlpStatusBadge">未安裝</span>
+            <!-- Card 3: Optional External YT-DLP Webpage Extension + Bilibili SESSDATA -->
+            <div class="liquid-surface settings-box settings-ytdlp-bar liquid-trackable">
+              <div class="settings-box-header">
+                <div class="settings-ytdlp-left">
+                  <span class="field-label-bright" id="lblSetYtDlp">外部網頁引擎 (YT-DLP)</span>
+                  <span class="settings-link-badge is-off" id="ytdlpStatusBadge">未安裝</span>
+                </div>
+                <div class="settings-header-actions">
+                  <button class="mini-inline-btn" type="button" id="btnYtDlpAction" onclick="triggerYtDlpUpdate()">下載安裝</button>
+                </div>
               </div>
-              <div class="settings-header-actions">
-                <button class="mini-inline-btn" type="button" id="btnYtDlpAction" onclick="triggerYtDlpUpdate()">下載安裝</button>
+              <div class="settings-bili-row">
+                <label class="settings-fp-label" for="biliSessInput" id="lblBiliSess">B 站 SESSDATA（可選，解鎖 1080P/4K）</label>
+                <div class="liquid-well liquid-trackable settings-input-well settings-secret-well">
+                  <input
+                    type="password"
+                    id="biliSessInput"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="留空可下 480P；填入瀏覽器 SESSDATA 解鎖高畫質"
+                    oninput="scheduleSaveConfig()"
+                  />
+                  <button
+                    class="mini-inline-btn secret-toggle-btn"
+                    type="button"
+                    id="btnToggleBiliSess"
+                    aria-pressed="false"
+                    onclick="toggleBiliSessVisibility()"
+                  >顯示</button>
+                </div>
               </div>
             </div>
           </section>
@@ -1851,6 +1922,10 @@
         placeholderJA3: '留空使用內建 Chrome TLS 指紋（進階自定義才填寫）',
         lblSetAkamai: 'Akamai 指紋自定義 (HTTP/2 Fingerprint)',
         lblSetYtDlp: '外部網頁引擎 (YT-DLP)',
+        lblBiliSess: 'B 站 SESSDATA（可選，解鎖 1080P/4K）',
+        phBiliSess: '留空可下 480P；填入瀏覽器 SESSDATA 解鎖高畫質',
+        btnShowSecret: '顯示',
+        btnHideSecret: '隱藏',
         ytdlpStatusNone: '未安裝',
         ytdlpStatusUpdating: '下載更新中...',
         ytdlpBtnInstall: '下載安裝',
@@ -1913,6 +1988,10 @@
         placeholderJA3: '留空使用内置 Chrome TLS 指纹（进阶自定义才填写）',
         lblSetAkamai: 'Akamai 指纹自定义 (HTTP/2 Fingerprint)',
         lblSetYtDlp: '外部网页引擎 (YT-DLP)',
+        lblBiliSess: 'B 站 SESSDATA（可选，解锁 1080P/4K）',
+        phBiliSess: '留空可下 480P；填入浏览器 SESSDATA 解锁高画质',
+        btnShowSecret: '显示',
+        btnHideSecret: '隐藏',
         ytdlpStatusNone: '未安装',
         ytdlpStatusUpdating: '下载更新中...',
         ytdlpBtnInstall: '下载安装',
@@ -1975,6 +2054,10 @@
         placeholderJA3: 'Leave blank for built-in Chrome TLS fingerprint (advanced)',
         lblSetAkamai: 'Custom Akamai Fingerprint (HTTP/2)',
         lblSetYtDlp: 'External Webpage Engine (YT-DLP)',
+        lblBiliSess: 'Bilibili SESSDATA (Optional, 1080P/4K)',
+        phBiliSess: 'Leave blank for 480P; paste SESSDATA for 1080P/4K',
+        btnShowSecret: 'Show',
+        btnHideSecret: 'Hide',
         ytdlpStatusNone: 'Not Installed',
         ytdlpStatusUpdating: 'Updating...',
         ytdlpBtnInstall: 'Install',
@@ -2046,7 +2129,8 @@
         saveDir: document.getElementById('dirInput').value.trim(),
         userAgent: document.getElementById('uaInput').value.trim(),
         ja3: document.getElementById('ja3Input').value.trim(),
-        akamai: document.getElementById('akamaiInput').value.trim()
+        akamai: document.getElementById('akamaiInput').value.trim(),
+        biliSessData: document.getElementById('biliSessInput').value.trim()
       };
     }
 
@@ -2136,6 +2220,9 @@
       document.getElementById('ja3Input').placeholder = t('placeholderJA3');
       document.getElementById('lblSetAkamai').textContent = t('lblSetAkamai');
       document.getElementById('lblSetYtDlp').textContent = t('lblSetYtDlp');
+      document.getElementById('lblBiliSess').textContent = t('lblBiliSess');
+      document.getElementById('biliSessInput').placeholder = t('phBiliSess');
+      syncBiliSessToggleBtn();
       document.getElementById('btnResetFingerprint').textContent = t('btnResetFingerprint');
       document.getElementById('lblConsoleHeader').textContent = t('lblConsoleHeader');
       document.getElementById('btnExportConsole').textContent = t('btnExportConsole');
@@ -2193,6 +2280,22 @@
         badge.classList.toggle('is-off', !refererEnabled);
         badge.textContent = refererEnabled ? t('badgeAntiLeechOn') : t('badgeAntiLeechOff');
       }
+    }
+
+    function syncBiliSessToggleBtn() {
+      const input = document.getElementById('biliSessInput');
+      const btn = document.getElementById('btnToggleBiliSess');
+      if (!input || !btn) return;
+      const revealed = input.type === 'text';
+      btn.textContent = revealed ? t('btnHideSecret') : t('btnShowSecret');
+      btn.setAttribute('aria-pressed', String(revealed));
+    }
+
+    function toggleBiliSessVisibility() {
+      const input = document.getElementById('biliSessInput');
+      if (!input) return;
+      input.type = input.type === 'password' ? 'text' : 'password';
+      syncBiliSessToggleBtn();
     }
 
     function resetFingerprintDefaults() {
@@ -2318,6 +2421,7 @@
         userAgent: document.getElementById('uaInput').value.trim(),
         ja3: document.getElementById('ja3Input').value.trim(),
         akamai: document.getElementById('akamaiInput').value.trim(),
+        biliSessData: document.getElementById('biliSessInput').value.trim(),
         concurrency: CONCURRENCY
       };
 
@@ -2505,6 +2609,8 @@
             setInputWithTitle('uaInput', typeof d.config.userAgent === 'string' ? d.config.userAgent : DEFAULT_UA);
             setInputWithTitle('ja3Input', typeof d.config.ja3 === 'string' ? d.config.ja3 : DEFAULT_JA3);
             setInputWithTitle('akamaiInput', typeof d.config.akamai === 'string' ? d.config.akamai : DEFAULT_AKAMAI);
+            document.getElementById('biliSessInput').value =
+              typeof d.config.biliSessData === 'string' ? d.config.biliSessData : '';
           }
           updateModuleBadges(
             d.toolsReady,
@@ -2877,6 +2983,7 @@
 
       win.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
+        if (e.target.id === 'tab-settings' && e.offsetX >= e.target.clientWidth) return;
         const interactive = e.target.closest(
           'input, button, .nl-switch, .action-card, .nav-item, .lang-pill, .console-box, .liquid-slider'
         );
@@ -2935,6 +3042,7 @@
       setInputWithTitle('akamaiInput', DEFAULT_AKAMAI);
       renderModuleBadges();
       syncFingerprintLinkUI();
+      syncBiliSessToggleBtn();
       updateClock();
       setInterval(updateClock, 1000);
       initLiquidTracking();
